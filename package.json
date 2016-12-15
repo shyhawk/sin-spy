@@ -3,5 +3,9 @@
   "version": "0.0.0",
   "description": "A web application for monitoring player traffic on Sinfar.",
   "main": "index.js",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "express": "~4.14.0",
+    "request": "~2.79.0"
+  }
 }
