@@ -34,7 +34,7 @@ console.log("##### App is running. Server will be polled every %d seconds. #####
 
 function updateOnlinePlayers() {
     request("http://nwn.sinfar.net/getonlineplayers.php", function(error, response, body) {
-        if (!error && response.statusCode == 200) {
+        if (!error && response && response.statusCode == 200) {
             var playerList = JSON.parse(body);
             updatePlayerData(playerList);
         } else {
@@ -180,7 +180,7 @@ function getClientName(client) {
 
 function getCharacterDescription(characterId, callback) {
     request("http://nwn.sinfar.net/getcharbio.php?pc_id=" + characterId, function(error, response, body) {
-        if (!error && response.statusCode == 200) {
+        if (!error && reponse && response.statusCode == 200) {
             callback(body !== "ERROR1" ? body : "");
         } else {
             console.error("Error %s: \"%s\" when acquiring character %s description", response.statusCode, error, characterId);
