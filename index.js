@@ -1,4 +1,5 @@
 var request = require("request");
+var fs = require("fs");
 var express = require("express");
 var app = express();
 
@@ -12,23 +13,81 @@ var clients = { // locations by chatClient
 var onlinePlayers = [];
 var playerData = {};
 
+var dataFile = process.env.DATA_FILE;
+if (dataFile && fs.existsSync(dataFile)) { // restore player data from file
+	restorePlayerData(dataFile);
+	console.log("Restored player data from file %s", dataFile);
+} else {
+	console.log("Player data not restored from file %s", dataFile);
+}
 
 // initial call
 updateOnlinePlayers();
 // check for updates every 30 seconds
 var interval = setInterval(function() {
-    console.log("=================================================");
     updateOnlinePlayers();
 }, process.env.POLL_FREQ);
+
+// On exit
+process.on("exit", function(code) {
+	if (dataFile) {
+		// Copy player data (to avoid modifying original)
+		var playerDataCopy = JSON.parse(JSON.stringify(playerData));
+		cleanAndSavePlayerData(dataFile, playerDataCopy);
+		console.log("Player data saved to %s", dataFile);
+	 } else {
+		console.log("Player data not saved");
+	}
+});
+
+// Ctrl+C exit
+process.on("SIGINT", function() {
+	process.exit(0);
+});
+
+// Error exit
+process.on("uncaughtException", function(err){
+	console.dir (err, { depth: null });
+	process.exit (1);
+});
 
 // get dump of current player data
 app.get("/data/", function(req, res) {
     res.send(escapeHtml(JSON.stringify(playerData)));
 });
 
+// start app
 app.listen(3000);
 
 console.log("##### App is running. Server will be polled every %d seconds. #####", process.env.POLL_FREQ / 1000);
+
+//// Player Data File Handling ////
+
+function cleanAndSavePlayerData(dataFile, playerData) {
+	try {
+		// Mark all online players as logged off
+		onlinePlayers.forEach(function(playerId, index){
+			var pData = playerData[playerId];
+			playerLeft(pData);
+		});
+
+		// Write JSON to file (sync to prevent app from exiting before write is complete)
+		fs.writeFileSync(dataFile, JSON.stringify(playerData));
+	} catch (e) {
+		console.error("Failed to write player data to file %s", dataFile);
+		throw(e);
+	}
+}
+
+function restorePlayerData(dataFile) {
+	try {
+		// Read JSON player data (sync to ensure it is fully parsed before app continues)
+		playerData = JSON.parse(fs.readFileSync(dataFile).toString());
+	} catch (e) {
+		console.error("Error in player data file. Player data not restored.");
+		throw(e);
+	}
+}
 
 //// Player Data Handling ////
 
@@ -38,12 +97,20 @@ function updateOnlinePlayers() {
             var playerList = JSON.parse(body);
             updatePlayerData(playerList);
         } else {
-            console.error("Error %s: \"%s\" when acquiring player list", response.statusCode, error);
+            console.error("Error %s %s when acquiring player list", response ? response.statusCode : "", error ? ("\"" + error + "\"") : "");
         }
     });
 }
 
 function updatePlayerData(currentOnlinePlayers) {
+	var updated = false;
+	function dataUpdated(){
+		if (!updated) { // if a data update occurs, log a separator line before any other logged output
+			console.log("=================================================");
+			updated = true;
+		}
+	}
+
     if (currentOnlinePlayers) {
         var newOnlinePlayersList = [];
         currentOnlinePlayers.forEach(function(player, index) {
@@ -57,6 +124,7 @@ function updatePlayerData(currentOnlinePlayers) {
             if (onlinePlayers.indexOf(player.playerId) < 0) { // player just logged in
                 playerJoined(player, pData);
                 if (!player.pcId) { // logged in and not playing character
+                	dataUpdated();
                     console.log("%s logged into %s", player.playerName, getClientName(player.chatClient));
                 }
             }
@@ -66,14 +134,17 @@ function updatePlayerData(currentOnlinePlayers) {
                     var charName = pData.characters[pData.activeCharacter].name;
                     var oldClient = pData.client;
                     characterLeft(pData, player.webClient);
+                    dataUpdated();
                     console.log("%s logged out of %s as %s", player.playerName, getClientName(oldClient), charName);
                 } else if (!pData.activeCharacter) { // logged in as character
                     characterJoined(player, pData);
+                    dataUpdated();
                     console.log("%s logged into %s as %s", player.playerName, getClientName(player.chatClient), player.pcName);
                 } else if (pData.activeCharacter != player.pcId) { // switched characters
                     var oldCharName = pData.characters[pData.activeCharacter].name;
                     var oldClient = pData.client;
                     characterSwitched(player, pData);
+                    dataUpdated();
                     console.log("%s logged out of %s as %s and into %s as %s", player.playerName, getClientName(oldClient), oldCharName, getClientName(player.chatClient), player.pcName);
                 }
             }
@@ -90,6 +161,7 @@ function updatePlayerData(currentOnlinePlayers) {
             if (pData) {
                 var oldClient = pData.client;
                 playerLeft(pData);
+                dataUpdated();
                 console.log("%s logged out of %s", pData.name, getClientName(oldClient));
             }
         });
@@ -180,7 +252,7 @@ function getClientName(client) {
 
 function getCharacterDescription(characterId, callback) {
     request("http://nwn.sinfar.net/getcharbio.php?pc_id=" + characterId, function(error, response, body) {
-        if (!error && reponse && response.statusCode == 200) {
+        if (!error && response && response.statusCode == 200) {
             callback(body !== "ERROR1" ? body : "");
         } else {
             console.error("Error %s: \"%s\" when acquiring character %s description", response.statusCode, error, characterId);
