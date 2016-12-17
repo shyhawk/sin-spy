@@ -3,6 +3,9 @@ logs
 *.log
 npm-debug.log*
 
+# Player Data
+*.json
+
 # Runtime data
 pids
 *.pid

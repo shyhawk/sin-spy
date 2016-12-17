@@ -113,8 +113,10 @@ function updatePlayerData(currentOnlinePlayers) {
 
     if (currentOnlinePlayers) {
         var newOnlinePlayersList = [];
+        var newOnlinePlayers = {}; // for quickly checking if player is marked online or not
         currentOnlinePlayers.forEach(function(player, index) {
             newOnlinePlayersList.push(player.playerId); // keep track of which players are online
+            newOnlinePlayers[player.playerId] = true;
             var pData = playerData[player.playerId];
 
             if (!pData) { // player has no record
@@ -129,7 +131,8 @@ function updatePlayerData(currentOnlinePlayers) {
                 }
             }
 
-            if (pData.activeCharacter || player.pcId) {
+            // To avoid logging loops, don't allow processing online players more than once (otherwise problems arise from disguised PCs)
+            if ((pData.activeCharacter && !newOnlinePlayers[player.playerId]) || player.pcId) {
                 if (!player.pcId) { // logged out as character
                     var charName = pData.characters[pData.activeCharacter].name;
                     var oldClient = pData.client;
