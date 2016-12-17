@@ -133,7 +133,7 @@ function updatePlayerData(currentOnlinePlayers) {
                 if (!player.pcId) { // logged out as character
                     var charName = pData.characters[pData.activeCharacter].name;
                     var oldClient = pData.client;
-                    characterLeft(pData, player.webClient);
+                    characterLeft(pData, player.chatClient);
                     dataUpdated();
                     console.log("%s logged out of %s as %s", player.playerName, getClientName(oldClient), charName);
                 } else if (!pData.activeCharacter) { // logged in as character
@@ -217,7 +217,7 @@ function characterJoined(player, pData) {
 }
 
 function characterSwitched(player, pData) {
-    characterLeft(pData, player.webClient);
+    characterLeft(pData, player.chatClient);
     characterJoined(player, pData);
 }
 
