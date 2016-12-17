@@ -65,7 +65,7 @@ function updatePlayerData(currentOnlinePlayers) {
                 if (!player.pcId) { // logged out as character
                     var charName = pData.characters[pData.activeCharacter].name;
                     var oldClient = pData.client;
-                    characterLeft(pData);
+                    characterLeft(pData, player.webClient);
                     console.log("%s logged out of %s as %s", player.playerName, getClientName(oldClient), charName);
                 } else if (!pData.activeCharacter) { // logged in as character
                     characterJoined(player, pData);
@@ -141,14 +141,15 @@ function characterJoined(player, pData) {
     joinedCharacter.logs.push(newLog);
 
     pData.activeCharacter = player.pcId;
+    pData.client = player.chatClient;
 }
 
 function characterSwitched(player, pData) {
-    characterLeft(pData);
+    characterLeft(pData, player.webClient);
     characterJoined(player, pData);
 }
 
-function characterLeft(pData) {
+function characterLeft(pData, client) {
     var cData = pData.characters[pData.activeCharacter];
 
     // update character data that could have been changed in-game
@@ -160,18 +161,17 @@ function characterLeft(pData) {
     cData.logs.push(latestLog);
 
     pData.activeCharacter = null; // clear active character
+    pData.client = client;
 }
 
 function playerLeft(pData) {
     if (pData.activeCharacter)
-        characterLeft(pData);
+        characterLeft(pData, null);
 
     // get latest log, modify it, and return it
     var latestLog = pData.logs.pop();
     latestLog.quit = Date.now();
     pData.logs.push(latestLog);
-
-    pData.client = null;
 }
 
 function getClientName(client) {
