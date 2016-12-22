@@ -10,34 +10,39 @@ var clients = { // locations by chatClient
     "5123": "Sinfar's Outer Isles",
     "5124": "Arche Terre"
 };
-var onlinePlayers = [];
-var playerData = {};
 
-var dataFile = process.env.DATA_FILE;
-if (dataFile && fs.existsSync(dataFile)) { // restore player data from file
-	restorePlayerData(dataFile);
-	console.log("Restored player data from file %s", dataFile);
-} else {
-	console.log("Player data not restored from file %s", dataFile);
-}
+// currently online players and characters
+var onlinePlayerData = {};
+var onlineCharacterData = {};
+
+var playerDataFile = process.env.PDATA_FILE;
+var characterDataFile = process.env.CDATA_FILE;
+
+// attempt to restore persistent player and character data
+var playerData = restoreData(playerDataFile);
+var characterData = restoreData(characterDataFile);
 
 // initial call
-updateOnlinePlayers();
-// check for updates every 30 seconds
+updateOnlineData();
+// check for updates every interval
 var interval = setInterval(function() {
-    updateOnlinePlayers();
+    updateOnlineData();
 }, process.env.POLL_FREQ);
 
 // On exit
 process.on("exit", function(code) {
-	if (dataFile) {
-		// Copy player data (to avoid modifying original)
-		var playerDataCopy = JSON.parse(JSON.stringify(playerData));
-		cleanAndSavePlayerData(dataFile, playerDataCopy);
-		console.log("Player data saved to %s", dataFile);
-	 } else {
-		console.log("Player data not saved");
-	}
+    if (playerDataFile && characterDataFile) {
+    	// Make copies of data (to avoid modifying originals)
+    	var playerDataCopy = JSON.parse(JSON.stringify(playerData));
+    	var characterDataCopy = JSON.parse(JSON.stringify(characterData));
+
+    	cleanLogs(playerDataCopy, characterDataCopy);
+
+    	saveData(playerDataFile, playerDataCopy);
+    	saveData(characterDataFile, characterDataCopy);
+    } else {
+        console.log("Data not saved.");
+    }
 });
 
 // Ctrl+C exit
@@ -51,58 +56,94 @@ process.on("uncaughtException", function(err){
 	process.exit (1);
 });
 
-// get dump of current player data
-app.get("/data/", function(req, res) {
+// get dump of player data
+app.get("/pdata/", function(req, res) {
     res.send(escapeHtml(JSON.stringify(playerData)));
 });
 
-// start app
-app.listen(3000);
+// get dump of character data
+app.get("/cdata/", function(req, res) {
+    res.send(escapeHtml(JSON.stringify(characterData)));
+});
 
-console.log("##### App is running. Server will be polled every %d seconds. #####", process.env.POLL_FREQ / 1000);
+// get dump of online player data
+app.get("/players/", function(req, res) {
+    res.send(escapeHtml(JSON.stringify(onlinePlayerData)));
+});
+
+// get dump of online character data
+app.get("/characters/", function(req, res) {
+    res.send(escapeHtml(JSON.stringify(onlineCharacterData)));
+});
+
+// start app
+var listener = app.listen(process.env.PORT || 3000);
+
+console.log("##### App is running on port %d. Server will be polled every %d seconds. #####", listener.address().port, process.env.POLL_FREQ / 1000);
 
 //// Player Data File Handling ////
 
-function cleanAndSavePlayerData(dataFile, playerData) {
-	try {
-		// Mark all online players as logged off
-		onlinePlayers.forEach(function(playerId, index){
-			var pData = playerData[playerId];
-			playerLeft(pData);
-		});
+function cleanLogs(playerData, characterData) {
+	// Mark all online players as logged off
+	Object.keys(onlinePlayerData).forEach(function(playerId, index){
+		var pData = playerData[playerId];
+		playerLeft(pData);
+	});
 
+	// Mark all online characters as logged off
+	Object.keys(onlineCharacterData).forEach(function(characterId, index){
+		var cData = characterData[characterId];
+		characterLeft(cData, true);
+	});
+}
+
+function saveData(dataFile, jsonData) {
+	try {
 		// Write JSON to file (sync to prevent app from exiting before write is complete)
-		fs.writeFileSync(dataFile, JSON.stringify(playerData));
+		fs.writeFileSync(dataFile, JSON.stringify(jsonData));
+		console.log("Data successfully saved to %s", dataFile);
 	} catch (e) {
-		console.error("Failed to write player data to file %s", dataFile);
+		console.error("Failed to write data to file %s", dataFile);
 		throw(e);
 	}
 }
 
-function restorePlayerData(dataFile) {
-	try {
-		// Read JSON player data (sync to ensure it is fully parsed before app continues)
-		playerData = JSON.parse(fs.readFileSync(dataFile).toString());
-	} catch (e) {
-		console.error("Error in player data file. Player data not restored.");
-		throw(e);
+function restoreData(dataFile) {
+	if (dataFile && fs.existsSync(dataFile)) {
+		try {
+			// Read JSON player data (sync to ensure it is fully parsed before app continues)
+			var restoredData = JSON.parse(fs.readFileSync(dataFile).toString());
+			console.log("Data successfully restored from %s", dataFile);
+			return restoredData;
+		} catch (e) {
+			console.error("Error in data file %s. Data not restored.", dataFile);
+			throw(e);
+		}
+	} else {
+		console.log("Data file \"%s\" doesn't exist. Data not restored.", dataFile);
+		return {};
 	}
 }
 
 //// Player Data Handling ////
 
-function updateOnlinePlayers() {
+function updateOnlineData() {
     request("http://nwn.sinfar.net/getonlineplayers.php", function(error, response, body) {
         if (!error && response && response.statusCode == 200) {
-            var playerList = JSON.parse(body);
-            updatePlayerData(playerList);
+            try {
+                var parsedJson = JSON.parse(body);
+                updateData(parsedJson);
+            } catch (e) {
+                console.error(e.stack);
+                throw "Error while updating online data. Application terminated."
+            }
         } else {
             console.error("Error %s %s when acquiring player list", response ? response.statusCode : "", error ? ("\"" + error + "\"") : "");
         }
     });
 }
 
-function updatePlayerData(currentOnlinePlayers) {
+function updateData(parsedData) {
 	var updated = false;
 	function dataUpdated(){
 		if (!updated) { // if a data update occurs, log a separator line before any other logged output
@@ -111,142 +152,183 @@ function updatePlayerData(currentOnlinePlayers) {
 		}
 	}
 
-    if (currentOnlinePlayers) {
-        var newOnlinePlayersList = [];
-        var newOnlinePlayers = {}; // for quickly checking if player is marked online or not
-        currentOnlinePlayers.forEach(function(player, index) {
-            newOnlinePlayersList.push(player.playerId); // keep track of which players are online
-            newOnlinePlayers[player.playerId] = true;
-            var pData = playerData[player.playerId];
+    if (parsedData) {
+        var newOnlinePlayerData = {};
+        var newOnlineCharacterData = {};
 
-            if (!pData) { // player has no record
-                pData = playerData[player.playerId] = {};
+        parsedData.forEach(function(entry, index) {
+        	var playerEntry = newOnlinePlayerData[entry.playerId];
+        	if (!playerEntry) {
+	            playerEntry = newOnlinePlayerData[entry.playerId] = {
+	            	name: entry.playerName, 
+	            	id: entry.playerId,
+	            	clients: []
+	            };
+	        }
+
+	        // add to current list of active player clients
+            playerEntry.clients.push({
+            	id: entry.chatClient,
+            	name: getClientName(entry.chatClient),
+                character: !entry.pcId ? null : {
+                    id: entry.pcId,
+                    name: entry.pcName
+                }
+            });
+
+            var pData = getOrAddPlayer(playerData, entry);
+
+            var characterEntry = newOnlineCharacterData[entry.pcId];
+            if (entry.pcId && !characterEntry) {
+            	characterEntry = newOnlineCharacterData[entry.pcId] = {
+            		name: entry.pcName, 
+            		id: entry.pcId, 
+                    portrait: entry.portrait,
+                    client: {
+                        id: entry.chatClient,
+                        name: getClientName(entry.chatClient)
+                    },
+            		player: {
+            			id: playerEntry.id,
+            			name: playerEntry.name
+            		}
+            	};
             }
 
-            if (onlinePlayers.indexOf(player.playerId) < 0) { // player just logged in
-                playerJoined(player, pData);
-                if (!player.pcId) { // logged in and not playing character
+            var cData = getOrAddCharacter(characterData, pData, entry);
+
+            if (!onlinePlayerData[playerEntry.id]) { // player just logged in
+                playerJoined(pData);
+                if (!characterEntry) { // logged in without a character (webclient login)
                 	dataUpdated();
-                    console.log("%s logged into %s", player.playerName, getClientName(player.chatClient));
+                    console.log("%s logged into %s", entry.playerName, getClientName(entry.chatClient));
                 }
             }
 
-            // To avoid logging loops, don't allow processing online players more than once (otherwise problems arise from disguised PCs)
-            if ((pData.activeCharacter && !newOnlinePlayers[player.playerId]) || player.pcId) {
-                if (!player.pcId) { // logged out as character
-                    var charName = pData.characters[pData.activeCharacter].name;
-                    var oldClient = pData.client;
-                    characterLeft(pData, player.chatClient);
-                    dataUpdated();
-                    console.log("%s logged out of %s as %s", player.playerName, getClientName(oldClient), charName);
-                } else if (!pData.activeCharacter) { // logged in as character
-                    characterJoined(player, pData);
-                    dataUpdated();
-                    console.log("%s logged into %s as %s", player.playerName, getClientName(player.chatClient), player.pcName);
-                } else if (pData.activeCharacter != player.pcId) { // switched characters
-                    var oldCharName = pData.characters[pData.activeCharacter].name;
-                    var oldClient = pData.client;
-                    characterSwitched(player, pData);
-                    dataUpdated();
-                    console.log("%s logged out of %s as %s and into %s as %s", player.playerName, getClientName(oldClient), oldCharName, getClientName(player.chatClient), player.pcName);
-                }
+            if (characterEntry && !onlineCharacterData[characterEntry.id]) { // character just logged in
+                characterJoined(cData);
+                // update player name, portrait, and description in case they have changed
+                updateCharacterData(cData, characterEntry.name, characterEntry.portrait, true);
+
+                dataUpdated();
+                console.log("%s logged into %s as %s", entry.playerName, getClientName(entry.chatClient), entry.pcName);
             }
+        });
+
+        // get list of characters that are no longer online
+        var leftCharacters = Object.keys(onlineCharacterData).filter(function(id) {
+            return !newOnlineCharacterData[id];
+        });
+
+        // log out charcaters that have left
+        leftCharacters.forEach(function(characterId, index) {
+        	var cData = characterData[characterId];
+        	if (cData) {
+        		characterLeft(cData);
+                var characterEntry = onlineCharacterData[characterId];
+                // update player name, portrait, and description in case they have changed
+                updateCharacterData(cData, characterEntry.name, characterEntry.portrait, true);
+
+        		dataUpdated();
+        		console.log("%s logged out of %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+        	}
         });
 
         // get list of players that are no longer online
-        var loggedPlayers = onlinePlayers.filter(function(p) {
-            return newOnlinePlayersList.indexOf(p) < 0;
+        var leftPlayers = Object.keys(onlinePlayerData).filter(function(id) {
+        	return !newOnlinePlayerData[id];
         });
 
-        // log out players
-        loggedPlayers.forEach(function(playerId, index) {
+        // log out players that have left
+        leftPlayers.forEach(function(playerId, index) {
             var pData = playerData[playerId];
             if (pData) {
-                var oldClient = pData.client;
                 playerLeft(pData);
-                dataUpdated();
-                console.log("%s logged out of %s", pData.name, getClientName(oldClient));
+
+                var playerEntry = onlinePlayerData[playerId];
+                // only print player logout if there's just one player entry, and it's not for a character (webclient)
+                if (playerEntry.clients.length == 1 && !playerEntry.clients[0].character) {
+                    dataUpdated();
+                    console.log("%s logged out of %s", playerEntry.name, playerEntry.clients[0].name);
+                }
             }
         });
 
-        onlinePlayers = newOnlinePlayersList; // update online list
+        onlinePlayerData = newOnlinePlayerData;
+        onlineCharacterData = newOnlineCharacterData;
     }
 }
 
-function playerJoined(player, pData) {
-    if (!pData.id) { // new player; initialize
-        pData.id = player.playerId;
-        pData.name = player.playerName;
-        pData.characters = {};
-        pData.logs = [];
+function getOrAddPlayer(playerData, entry) {
+    var pData = playerData[entry.playerId];
+    if (!pData) { // player has no record, so create one
+        pData = playerData[entry.playerId] = {
+            id: entry.playerId,
+            name: entry.playerName,
+            characters: [],
+            logs: []
+        };
     }
 
+    return pData;
+}
+
+function getOrAddCharacter(characterData, pData, entry) {
+    if (!entry.pcId) return null; // ignore for entries without character data
+
+    var cData = characterData[entry.pcId];
+    if (!cData) { // character has no record, so create one
+        cData = characterData[entry.pcId] = {
+            id: entry.pcId,
+            player: entry.playerId,
+            logs: []
+        }
+
+        // add character to player's character list
+        pData.characters.push(entry.pcId);
+    }
+
+    return cData;
+}
+
+function playerJoined(pData) {
     var newLog = {
         joined: Date.now()
     };
     pData.logs.push(newLog);
-
-    pData.client = player.chatClient;
 }
 
-function updateCharacterData(player, cData) {
-    // only update character name and portrait if valid new values exist
-    if (player && player.pcName) cData.name = player.pcName;
-    if (player && player.portrait) cData.portrait = player.portrait;
-
-    getCharacterDescription(cData.id, function(desc) {
-        cData.description = desc;
-    }); // get description
-}
-
-function characterJoined(player, pData) {
-    var joinedCharacter = pData.characters[player.pcId];
-    if (!joinedCharacter) {
-        joinedCharacter = pData.characters[player.pcId] = {};
-        joinedCharacter.id = player.pcId;
-        joinedCharacter.logs = [];
-    }
-
-    // update character data that could have been changed
-    updateCharacterData(player, joinedCharacter);
-
+function characterJoined(cData) {
     var newLog = {
         joined: Date.now()
     };
-    joinedCharacter.logs.push(newLog);
-
-    pData.activeCharacter = player.pcId;
-    pData.client = player.chatClient;
+    cData.logs.push(newLog);
 }
 
-function characterSwitched(player, pData) {
-    characterLeft(pData, player.chatClient);
-    characterJoined(player, pData);
-}
-
-function characterLeft(pData, client) {
-    var cData = pData.characters[pData.activeCharacter];
-
-    // update character data that could have been changed in-game
-    updateCharacterData(null, cData);
-
-    // get latest log, modify it, and return it
+function characterLeft(cData) {
+    // get latest log, modify it, and put it back
     var latestLog = cData.logs.pop();
     latestLog.quit = Date.now();
     cData.logs.push(latestLog);
-
-    pData.activeCharacter = null; // clear active character
-    pData.client = client;
 }
 
 function playerLeft(pData) {
-    if (pData.activeCharacter)
-        characterLeft(pData, null);
-
-    // get latest log, modify it, and return it
+    // get latest log, modify it, and put it back
     var latestLog = pData.logs.pop();
     latestLog.quit = Date.now();
     pData.logs.push(latestLog);
+}
+
+function updateCharacterData(cData, name, portrait, updateDescription) {
+    // only update character name and portrait if valid new values exist
+    if (name) cData.name = name;
+    if (portrait) cData.portrait = portrait;
+
+    if (updateDescription) {
+        getCharacterDescription(cData.id, function(desc) {
+            cData.description = desc;
+        }); // get description
+    }
 }
 
 function getClientName(client) {
@@ -256,7 +338,7 @@ function getClientName(client) {
 function getCharacterDescription(characterId, callback) {
     request("http://nwn.sinfar.net/getcharbio.php?pc_id=" + characterId, function(error, response, body) {
         if (!error && response && response.statusCode == 200) {
-            callback(body !== "ERROR1" ? body : "");
+            callback(/^ERROR[0-9]*$/.test(body) ? "" : body); // ignore error codes
         } else {
             console.error("Error %s: \"%s\" when acquiring character %s description", response.statusCode, error, characterId);
         }
