@@ -33,7 +33,7 @@ var runInterval = setInterval(function() {
 var wakeInterval;
 if (process.env.APP_URL) {
     wakeInterval = setInterval(function() {
-        http.get(process.env.APP_URL);
+        request(process.env.APP_URL);
     }, 1500000); // every 25 minutes
 }
 
