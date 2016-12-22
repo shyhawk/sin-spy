@@ -25,9 +25,17 @@ var characterData = restoreData(characterDataFile);
 // initial call
 updateOnlineData();
 // check for updates every interval
-var interval = setInterval(function() {
+var runInterval = setInterval(function() {
     updateOnlineData();
 }, process.env.POLL_FREQ);
+
+// prevent Heroku app from sleeping by having it wake itself up
+var wakeInterval;
+if (process.env.APP_URL) {
+    wakeInterval = setInterval(function() {
+        http.get(process.env.APP_URL);
+    }, 1500000); // every 25 minutes
+}
 
 // On exit
 process.on("exit", function(code) {
@@ -48,6 +56,11 @@ process.on("exit", function(code) {
 // Ctrl+C exit
 process.on("SIGINT", function() {
 	process.exit(0);
+});
+
+// Heroku termination
+process.on("SIGTERM", function() {
+    process.exit(0);
 });
 
 // Error exit
