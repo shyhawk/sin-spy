@@ -1,14 +1,14 @@
 {
   "name": "SinSpy",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A web application for monitoring player traffic on Sinfar.",
-  "main": "index.js",
+  "main": "app.js",
   "license": "MIT",
   "dependencies": {
     "express": "~4.14.0",
     "request": "~2.79.0"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node app.js"
   }
 }
