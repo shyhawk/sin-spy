@@ -193,31 +193,43 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 	}
 
 	function playerJoined(pData) {
-	    var newLog = {
-	        joined: Date.now()
-	    };
-	    pData.logs.push(newLog);
+		joined(pData.logs);
 	}
 
 	function characterJoined(cData) {
-	    var newLog = {
-	        joined: Date.now()
-	    };
-	    cData.logs.push(newLog);
+	    joined(cData.logs);
 	}
 
 	function characterLeft(cData) {
-	    // get latest log, modify it, and put it back
-	    var latestLog = cData.logs.pop();
-	    latestLog.quit = Date.now();
-	    cData.logs.push(latestLog);
+	    left(cData.logs);
 	}
 
 	function playerLeft(pData) {
-	    // get latest log, modify it, and put it back
-	    var latestLog = pData.logs.pop();
+	    left(pData.logs);
+	}
+
+	function joined(logs) {
+		var latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
+		var now = Date.now();
+		// if last log was <= 10 mins ago, strike last quit value and consider the log continued
+		if (latestLog && now - latestLog.quit <= 600000) {
+			latestLog.quit = undefined;
+			latestLog.continued = true;
+		} else { // otherwise create a new log
+		    var newLog = {
+		        joined: Date.now()
+		    };
+		    logs.push(newLog);
+		}
+	}
+
+	function left(logs) {
+		// get latest log and add quit time
+	    var latestLog = logs[logs.length - 1];
 	    latestLog.quit = Date.now();
-	    pData.logs.push(latestLog);
+	    if (latestLog.continued) { // used to tell whether existing logs were modified or if this log is new
+	    	latestLog.continued = undefined;
+	    }
 	}
 
 	function updateCharacterData(cData, name, portrait, updateDescription) {
