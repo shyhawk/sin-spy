@@ -1,6 +1,6 @@
 var request = require("request");
 
-module.exports = function(playerData, characterData, onlinePlayerDataProperty, onlineCharacterDataProperty) {
+module.exports = function(playerData, characterData, onlinePlayerDataProperty, onlineCharacterDataProperty, logging) {
 	var publicMonitor = {};
 
 	var clients = { // locations by chatClient
@@ -34,11 +34,11 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 	                var parsedJson = JSON.parse(body);
 	                updateData(parsedJson);
 	            } catch (e) {
-	                console.error(e.stack);
+	                logging.error(e.stack);
 	                throw "Error while updating online data. Application terminated."
 	            }
 	        } else {
-	            console.error("Error %s %s when acquiring player list", response ? response.statusCode : "", error ? ("\"" + error + "\"") : "");
+	            logging.error("Error %s %s when acquiring player list", response ? response.statusCode : "", error ? ("\"" + error + "\"") : "");
 	        }
 	    });
 	}
@@ -47,7 +47,7 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 		var updated = false;
 		function dataUpdated(){
 			if (!updated) { // if a data update occurs, log a separator line before any other logged output
-				console.log("=================================================");
+				logging.log("=================================================");
 				updated = true;
 			}
 		}
@@ -107,7 +107,7 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 
 	                if (!characterEntry) { // logged in without a character (webclient login)
 	                	dataUpdated();
-	                    console.log("%s logged into %s", playerEntry.name, playerEntry.latestClient().name);
+	                    logging.log("%s logged into %s", playerEntry.name, playerEntry.latestClient().name);
 	                }
 	            }
 
@@ -121,10 +121,10 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 		                }
 
 		                dataUpdated();
-		                console.log("%s logged into %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+		                logging.log("%s logged into %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
 		            } else if (characterEntry.client.id !== previousCharacterEntry.client.id) {
 		            	dataUpdated(); // character client (server) change
-		            	console.log("%s as %s switched from %s to %s", characterEntry.player.name, characterEntry.name, previousCharacterEntry.client.name, characterEntry.client.name);
+		            	logging.log("%s as %s switched from %s to %s", characterEntry.player.name, characterEntry.name, previousCharacterEntry.client.name, characterEntry.client.name);
 		            }
 	            }
 
@@ -146,9 +146,9 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 
 	        		dataUpdated();
 	        		if (playerEntry) { // character logged off but player is still online
-	        			console.log("%s logged off from %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+	        			logging.log("%s logged off from %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
 	        		} else { // character logged off and player is offline too
-	        			console.log("%s logged off from %s as %s and quit", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+	        			logging.log("%s logged off from %s as %s and quit", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
 	        		}
 	        	}
 	        });
@@ -168,7 +168,7 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 	                // only print player logout if there's just one player entry, and it's not for a character (webclient)
 	                if (playerEntry.clients.length == 1 && !playerEntry.latestClient().character) {
 	                    dataUpdated();
-	                    console.log("%s quit %s", playerEntry.name, playerEntry.latestClient().name);
+	                    logging.log("%s quit %s", playerEntry.name, playerEntry.latestClient().name);
 	                }
 	            }
 	        });
@@ -304,7 +304,7 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 	        if (!error && response && response.statusCode == 200) {
 	            callback(/^ERROR[0-9]*$/.test(body) ? "" : body); // ignore error codes
 	        } else {
-	            console.error("Error %s: \"%s\" when acquiring character %s description", response ? response.statusCode : "", error, characterId);
+	            logging.error("Error %s: \"%s\" when acquiring character %s description", response ? response.statusCode : "", error, characterId);
 	        }
 	    });
 	}

@@ -2,6 +2,29 @@ var request = require("request");
 var express = require("express");
 var app = express();
 
+var logging = (function () {
+    var debugLevel = process.env.DEBUG || 0;
+
+    return {
+        error: function() {
+            var args = Array.prototype.slice.call(arguments);
+            console.error.apply(console, args);
+        },
+        warn: function() {
+            if (debugLevel > 0) {
+                var args = Array.prototype.slice.call(arguments);
+                console.warn.apply(console, args);
+            }
+        },
+        log: function() {
+            if (debugLevel > 1) {
+                var args = Array.prototype.slice.call(arguments);
+                console.log.apply(console, args);
+            }
+        }
+    };
+}());
+
 // currently online players and characters
 var onlinePlayerData = {};
 var onlineCharacterData = {};
@@ -20,7 +43,7 @@ var monitor = require("./monitor.js")(playerData, characterData,
 }, function(newData) { // encapsulates online character data scope to provide artificial pass-by-reference
     if (newData) onlineCharacterData = newData;
     return onlineCharacterData;
-});
+}, logging);
 
 // initial call
 monitor.update();
@@ -54,7 +77,7 @@ process.on("exit", function(code) {
     	saveData(playerDataFile, playerDataCopy);
     	saveData(characterDataFile, characterDataCopy);
     } else {
-        console.log("Data not saved.");
+        logging.warn("Data not saved.");
     }
 });
 
@@ -190,7 +213,7 @@ app.get("/online/", function(req, res) {
 
 // start app
 var listener = app.listen(getEnvVar(process.env.PORT) || 3000, function() {
-    console.log("##### App is running on port %d. Server will be polled every %d seconds. #####"
+    logging.log("##### App is running on port %d. Server will be polled every %d seconds. #####"
         , listener.address().port
         , pollFreq / 1000);
 });
@@ -208,9 +231,9 @@ function saveData(dataFile, jsonData) {
     try {
         // Write JSON to file (sync to prevent app from exiting before write is complete)
         fs.writeFileSync(dataFile, JSON.stringify(jsonData));
-        console.log("Data successfully saved to %s", dataFile);
+        logging.log("Data successfully saved to %s", dataFile);
     } catch (e) {
-        console.error("Failed to write data to file %s", dataFile);
+        logging.error("Failed to write data to file %s", dataFile);
         throw(e);
     }
 }
@@ -220,17 +243,19 @@ function restoreData(dataFile) {
         try {
             // Read JSON player data (sync to ensure it is fully parsed before app continues)
             var restoredData = JSON.parse(fs.readFileSync(dataFile).toString());
-            console.log("Data successfully restored from %s", dataFile);
+            logging.log("Data successfully restored from %s", dataFile);
             return restoredData;
         } catch (e) {
-            console.error("Error in data file %s. Data not restored.", dataFile);
+            logging.error("Error in data file %s. Data not restored.", dataFile);
             throw(e);
         }
     } else {
-        console.log("Data file \"%s\" doesn't exist. Data not restored.", dataFile);
+        logging.warn("Data file \"%s\" doesn't exist. Data not restored.", dataFile);
         return {};
     }
 }
+
+//// MISC ////
 
 function escapeHtml(unsafe) {
     return unsafe
