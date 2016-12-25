@@ -1,6 +1,6 @@
 var request = require("request");
 
-module.exports = function(playerData, characterData, onlinePlayerData, onlineCharacterData) {
+module.exports = function(playerData, characterData, onlinePlayerDataProperty, onlineCharacterDataProperty) {
 	var publicMonitor = {};
 
 	var clients = { // locations by chatClient
@@ -15,18 +15,17 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 
 	publicMonitor.cleanup = function cleanLogs(playerData, characterData) {
 		// Mark all online players as logged off
-		Object.keys(onlinePlayerData).forEach(function(playerId, index){
+		Object.keys(onlinePlayerDataProperty()).forEach(function(playerId, index){
 			var pData = playerData[playerId];
 			playerLeft(pData);
 		});
 
 		// Mark all online characters as logged off
-		Object.keys(onlineCharacterData).forEach(function(characterId, index){
+		Object.keys(onlineCharacterDataProperty()).forEach(function(characterId, index){
 			var cData = characterData[characterId];
 			characterLeft(cData, true);
 		});
 	}
-	//publicMonitor.cleanLogs = cleanLogs;
 
 	publicMonitor.update = function updateOnlineData() {
 	    request("http://nwn.sinfar.net/getonlineplayers.php", function(error, response, body) {
@@ -63,7 +62,8 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 		            playerEntry = newOnlinePlayerData[entry.playerId] = {
 		            	name: entry.playerName, 
 		            	id: entry.playerId,
-		            	clients: []
+		            	clients: [],
+		            	latestClient: function() {return this.clients[this.clients.length - 1];}
 		            };
 		        }
 
@@ -98,26 +98,41 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 
 	            var cData = getOrAddCharacter(characterData, pData, entry);
 
-	            if (!onlinePlayerData[playerEntry.id]) { // player just logged in
+	            if (!onlinePlayerDataProperty()[playerEntry.id]) { // player just logged in
 	                playerJoined(pData);
+
+	                if (updatePlayerData(pData, entry.portrait, entry.pcId)) {
+	                	// player data updated
+	                }
+
 	                if (!characterEntry) { // logged in without a character (webclient login)
 	                	dataUpdated();
-	                    console.log("%s logged into %s", entry.playerName, getClientName(entry.chatClient));
+	                    console.log("%s logged into %s", playerEntry.name, playerEntry.latestClient().name);
 	                }
 	            }
 
-	            if (characterEntry && !onlineCharacterData[characterEntry.id]) { // character just logged in
-	                characterJoined(cData);
-	                // update player name, portrait, and description in case they have changed
-	                updateCharacterData(cData, characterEntry.name, characterEntry.portrait, true);
+	            if (characterEntry) {
+	            	var previousCharacterEntry = onlineCharacterDataProperty()[characterEntry.id];
+	            	if (!previousCharacterEntry) { // character just logged in
+		                characterJoined(cData);
+		                // update player name, portrait, and description in case they have changed
+		                if (updateCharacterData(cData, characterEntry.name, characterEntry.portrait, true)) {
+		                	// character data updated
+		                }
 
-	                dataUpdated();
-	                console.log("%s logged into %s as %s", entry.playerName, getClientName(entry.chatClient), entry.pcName);
+		                dataUpdated();
+		                console.log("%s logged into %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+		            } else if (characterEntry.client.id !== previousCharacterEntry.client.id) {
+		            	dataUpdated(); // character client (server) change
+		            	console.log("%s as %s switched from %s to %s", characterEntry.player.name, characterEntry.name, previousCharacterEntry.client.name, characterEntry.client.name);
+		            }
 	            }
+
+	            
 	        });
 
 	        // get list of characters that are no longer online
-	        var leftCharacters = Object.keys(onlineCharacterData).filter(function(id) {
+	        var leftCharacters = Object.keys(onlineCharacterDataProperty()).filter(function(id) {
 	            return !newOnlineCharacterData[id];
 	        });
 
@@ -126,17 +141,20 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 	        	var cData = characterData[characterId];
 	        	if (cData) {
 	        		characterLeft(cData);
-	                var characterEntry = onlineCharacterData[characterId];
-	                // update player name, portrait, and description in case they have changed
-	                updateCharacterData(cData, characterEntry.name, characterEntry.portrait, true);
+	                var characterEntry = onlineCharacterDataProperty()[characterId];
+	                var playerEntry = newOnlinePlayerData[characterEntry.player.id];
 
 	        		dataUpdated();
-	        		console.log("%s logged out of %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+	        		if (playerEntry) { // character logged off but player is still online
+	        			console.log("%s logged off from %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+	        		} else { // character logged off and player is offline too
+	        			console.log("%s logged off from %s as %s and quit", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+	        		}
 	        	}
 	        });
 
 	        // get list of players that are no longer online
-	        var leftPlayers = Object.keys(onlinePlayerData).filter(function(id) {
+	        var leftPlayers = Object.keys(onlinePlayerDataProperty()).filter(function(id) {
 	        	return !newOnlinePlayerData[id];
 	        });
 
@@ -146,17 +164,17 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 	            if (pData) {
 	                playerLeft(pData);
 
-	                var playerEntry = onlinePlayerData[playerId];
+	                var playerEntry = onlinePlayerDataProperty()[playerId];
 	                // only print player logout if there's just one player entry, and it's not for a character (webclient)
-	                if (playerEntry.clients.length == 1 && !playerEntry.clients[0].character) {
+	                if (playerEntry.clients.length == 1 && !playerEntry.latestClient().character) {
 	                    dataUpdated();
-	                    console.log("%s logged out of %s", playerEntry.name, playerEntry.clients[0].name);
+	                    console.log("%s quit %s", playerEntry.name, playerEntry.latestClient().name);
 	                }
 	            }
 	        });
 
-	        onlinePlayerData = newOnlinePlayerData;
-	        onlineCharacterData = newOnlineCharacterData;
+	        onlinePlayerDataProperty(newOnlinePlayerData);
+	        onlineCharacterDataProperty(newOnlineCharacterData);
 	    }
 	}
 
@@ -169,6 +187,12 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 	            characters: [],
 	            logs: []
 	        };
+
+	        updatePlayerData(pData, entry.portrait, entry.pcId);
+	    } else {
+	    	if (updatePlayerData(pData, entry.portrait, entry.pcId)) {
+	    		// player data updated (portrait)
+	    	}
 	    }
 
 	    return pData;
@@ -185,8 +209,15 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 	            logs: []
 	        }
 
+	        updateCharacterData(cData, entry.pcName, entry.portrait, true);
+
 	        // add character to player's character list
 	        pData.characters.push(entry.pcId);
+	    } else {
+	    	// update player name, portrait, and description in case they have changed
+        	if (updateCharacterData(cData, entry.pcName, entry.portrait, true)){
+        		// character data updated
+        	}
 	    }
 
 	    return cData;
@@ -232,16 +263,36 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 	    }
 	}
 
+	function updatePlayerData(pData, portrait, isCharacterPortrait) {
+		if (portrait && !isCharacterPortrait && pData.portrait != portrait) {
+			pData.portrait = portrait;
+			return true;
+		}
+		return false;
+	}
+
 	function updateCharacterData(cData, name, portrait, updateDescription) {
+		var cDataUpdated = false;
 	    // only update character name and portrait if valid new values exist
-	    if (name) cData.name = name;
-	    if (portrait) cData.portrait = portrait;
+	    if (name && name != cData.name) {
+	    	cDataUpdated = true;
+	    	cData.name = name;
+	    }
+	    if (portrait && portrait != cData.portrait) {
+	    	cDataUpdated = true;
+	    	cData.portrait = portrait;
+	    }
 
 	    if (updateDescription) {
 	        getCharacterDescription(cData.id, function(desc) {
-	            cData.description = desc;
+	        	if (desc != cData.description) {
+	        		cDataUpdated = true;
+	        		cData.description = desc;
+	        	}
 	        }); // get description
 	    }
+
+	    return cDataUpdated;
 	}
 
 	function getClientName(client) {
@@ -253,7 +304,7 @@ module.exports = function(playerData, characterData, onlinePlayerData, onlineCha
 	        if (!error && response && response.statusCode == 200) {
 	            callback(/^ERROR[0-9]*$/.test(body) ? "" : body); // ignore error codes
 	        } else {
-	            console.error("Error %s: \"%s\" when acquiring character %s description", response.statusCode, error, characterId);
+	            console.error("Error %s: \"%s\" when acquiring character %s description", response ? response.statusCode : "", error, characterId);
 	        }
 	    });
 	}

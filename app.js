@@ -13,7 +13,14 @@ var characterDataFile = getEnvVar(process.env.CDATA_FILE);
 var playerData = restoreData(playerDataFile);
 var characterData = restoreData(characterDataFile);
 
-var monitor = require("./monitor.js")(playerData, characterData, onlinePlayerData, onlineCharacterData);
+var monitor = require("./monitor.js")(playerData, characterData, 
+    function(newData){ // encapsulates online player data scope to provide artificial pass-by-reference
+    if (newData) onlinePlayerData = newData;
+    return onlinePlayerData;
+}, function(newData) { // encapsulates online character data scope to provide artificial pass-by-reference
+    if (newData) onlineCharacterData = newData;
+    return onlineCharacterData;
+});
 
 // initial call
 monitor.update();
@@ -85,6 +92,100 @@ app.get("/players/", function(req, res) {
 // get dump of online character data
 app.get("/characters/", function(req, res) {
     res.send(escapeHtml(JSON.stringify(onlineCharacterData)));
+});
+
+// rudamentary acquiring of online players or characters
+app.get("/online/", function(req, res) {
+    var playerTags = req.query.pid || "";
+    var characterTags = req.query.cid || "";
+
+    var taggedPlayers = {};
+    playerTags.split(',').forEach(function(id, index) {
+        taggedPlayers[id] = id; // tag players
+    });
+
+    var taggedCharacters = {};
+    characterTags.split(',').forEach(function(id, index) {
+        taggedCharacters[id] = id; // tag characters
+    });
+
+    var onlineList = [];
+
+    var characterPlayers = {}; // set of players that have active characters
+
+    // build list of online characters
+    Object.keys(onlineCharacterData).forEach(function(id, index) {
+        var characterEntry = onlineCharacterData[id];
+        characterPlayers[characterEntry.player.id] = characterEntry.player.id; // mark that the player has a character online
+        var cData = characterData[id];
+
+        onlineList.push({
+            portrait: cData.portrait,
+            player: {
+                name: characterEntry.player.name,
+                id: characterEntry.player.id
+            },
+            character: {
+                name: characterEntry.name,
+                id: characterEntry.id
+            },
+            client: {
+                name: characterEntry.client.name,
+                id: characterEntry.client.id
+            },
+            joined: cData.logs[cData.logs.length - 1].joined,
+            tagged: !!taggedCharacters[characterEntry.id] || !!taggedPlayers[characterEntry.player.id]
+        });
+    });
+
+    // build list of online players
+    Object.keys(onlinePlayerData).forEach(function(id, index) {
+        if (characterPlayers[id]) return; // skip any players that have online characters
+
+        var playerEntry = onlinePlayerData[id];
+        var pData = playerData[id];
+
+        onlineList.push({
+            portrait: pData.portrait,
+            player: {
+                name: playerEntry.name,
+                id: playerEntry.id
+            },
+            character: null,
+            client: {
+                name: playerEntry.latestClient().name,
+                id: playerEntry.latestClient().id
+            },
+            joined: pData.logs[pData.logs.length - 1].joined,
+            tagged: !!taggedPlayers[playerEntry.id]
+        });
+    });
+
+    // sort online list
+    onlineList.sort(function(a, b) {
+        // tagged items on top
+        if (a.tagged && !b.tagged)
+            return -1;
+        else if (!a.tagged && b.tagged)
+            return 1;
+        else { // players on top
+            if (!a.character && b.character) {
+                return -1;
+            } else if (a.character && !b.character) {
+                return 1;
+            } else { // alphabetical
+                var aName = a.character ? a.character.name : a.player.name;
+                var bName = b.character ? b.character.name : b.player.name;
+                var nameCompare = aName.localeCompare(bName);
+                if (nameCompare !== 0)
+                    return nameCompare;
+                else // oldest on top
+                    return a.joined - b.joined;
+            }
+        }
+    });
+
+    res.send(JSON.stringify(onlineList));
 });
 
 // start app
