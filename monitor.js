@@ -209,15 +209,8 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 	            logs: []
 	        }
 
-	        updateCharacterData(cData, entry.pcName, entry.portrait, true);
-
 	        // add character to player's character list
 	        pData.characters.push(entry.pcId);
-	    } else {
-	    	// update player name, portrait, and description in case they have changed
-        	if (updateCharacterData(cData, entry.pcName, entry.portrait, true)){
-        		// character data updated
-        	}
 	    }
 
 	    return cData;
@@ -299,13 +292,17 @@ module.exports = function(playerData, characterData, onlinePlayerDataProperty, o
 	    return clients[client] || (client === null ? "Offline" : "Other");
 	}
 
+	var activeDescRequests = 0;
 	function getCharacterDescription(characterId, callback) {
+		activeDescRequests++;
 	    request("http://nwn.sinfar.net/getcharbio.php?pc_id=" + characterId, function(error, response, body) {
 	        if (!error && response && response.statusCode == 200) {
 	            callback(/^ERROR[0-9]*$/.test(body) ? "" : body); // ignore error codes
 	        } else {
 	            logging.error("Error %s: \"%s\" when acquiring character %s description", response ? response.statusCode : "", error, characterId);
 	        }
+
+	        logging.log("Description request completed. %d remaining.", --activeDescRequests);
 	    });
 	}
 

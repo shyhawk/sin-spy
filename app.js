@@ -2,6 +2,8 @@ var request = require("request");
 var express = require("express");
 var app = express();
 
+var startTime = Date.now();
+
 var logging = (function () {
     var debugLevel = process.env.DEBUG || 0;
 
@@ -86,7 +88,7 @@ process.on("SIGINT", function() {
 	process.exit(0);
 });
 
-// Heroku termination
+// termination signal
 process.on("SIGTERM", function() {
     process.exit(0);
 });
@@ -115,6 +117,13 @@ app.get("/players/", function(req, res) {
 // get dump of online character data
 app.get("/characters/", function(req, res) {
     res.send(escapeHtml(JSON.stringify(onlineCharacterData)));
+});
+
+// check how long app has been running
+app.get("/up/", function(req, res){
+    var startDate = new Date(startTime);
+    var upTime = Date.now() - startTime;
+    res.send("<h1>Up since " + startDate.toUTCString() + "</h1><h2>" + Math.floor(upTime/36e5) + " hrs, " + Math.floor((upTime/6e4) % 60) + " mins, " + Math.floor((upTime/1e3) % 60) + " secs</h2>");
 });
 
 // rudamentary acquiring of online players or characters
@@ -213,7 +222,7 @@ app.get("/online/", function(req, res) {
 
 // start app
 var listener = app.listen(getEnvVar(process.env.PORT) || 3000, function() {
-    logging.log("##### App is running on port %d. Server will be polled every %d seconds. #####"
+    console.log("##### App is running on port %d. Server will be polled every %d seconds. #####"
         , listener.address().port
         , pollFreq / 1000);
 });
