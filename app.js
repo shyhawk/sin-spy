@@ -1,4 +1,4 @@
-var server = require("./server.js")();
+var server = require("./server.js")(); // begin server
 
 // On exit
 process.on("exit", function(code) {

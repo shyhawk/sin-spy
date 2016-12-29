@@ -1,6 +1,6 @@
 var request = require("request");
 
-module.exports = function(playerData, characterData, onlinePlayerDataProperty, onlineCharacterDataProperty, logging) {
+module.exports = function(db, playerData, characterData, onlinePlayerDataProperty, onlineCharacterDataProperty, logging) {
 	var publicMonitor = {};
 
 	var clients = { // locations by chatClient
