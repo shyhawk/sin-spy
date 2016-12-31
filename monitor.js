@@ -47,7 +47,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		var updated = false;
 		function dataUpdated(){
 			if (!updated) { // if a data update occurs, log a separator line before any other logged output
-				logging.log("=================================================");
+				logging.log("========================= %s ========================", (new Date()).toUTCString());
 				updated = true;
 			}
 		}
@@ -202,6 +202,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	function playerFound(dbData, pData) {
 		 // check of portrait was updated
 		updatePlayerData(pData, dbData.portrait, true);
+		updatePlayerDb(pData);
 
 		logging.log("Retrieved player %s", dbData.name);
 	}
@@ -213,15 +214,23 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	}
 
 	function characterFound(dbData, cData) {
+		cData.description = dbData.description; // must manually set description
+
         // update character name, portrait, and description in case they have changed
-        updateCharacterData(cData, dbData.name, dbData.portrait, true);
+        updateCharacterData(cData, dbData.name, dbData.portrait, true, function(cData) {
+        	updateCharacterDb(cData);
+        });
 
 		logging.log("Retrieved character %s", dbData.name);
 	}
 
 	function characterAdded(dbData, cData) {
+		cData.description = dbData.description; // must manually set description
+
 		// get character description
-		updateCharacterData(cData, dbData.name, dbData.portrait, true);
+		updateCharacterData(cData, dbData.name, dbData.portrait, true, function(cData) {
+        	updateCharacterDb(cData);
+        });
 
 		logging.log("Added character %s", dbData.name);
 	}
@@ -370,6 +379,22 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	        logging.log("Description request completed. %d remaining.", --activeDescRequests);
 	    });
+	}
+
+	function updatePlayerDb(pData) {
+		if (pData.dirty) {
+			db.updatePlayer(pData.id, pData.portrait);
+			delete pData.dirty;
+			logging.log("Player %s updated.", pData.name);
+		}
+	}
+
+	function updateCharacterDb(cData) {
+		if (cData.dirty) {
+			db.updateCharacter(cData.id, cData.name, cData.portrait, cData.description);
+			delete cData.dirty;
+			logging.log("Character %s updated", cData.name);
+		}
 	}
 
 	return publicMonitor;

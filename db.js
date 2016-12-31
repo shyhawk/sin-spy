@@ -25,20 +25,25 @@ module.exports = function(dbString, logging, callback) {
 		function getCollection(type) {
 			var collectionForType = collectionTypes[type];
 
-			if (!collectionForType)
+			if (!collectionForType) {
 				collectionForType = collectionTypes[type] = db.collection(type);
+				collectionForType.ensureIndex({"id": 1}, {"unique": true, "name": type.charAt(0) + "id"});
+			}
 
 			return collectionForType;
 		}
 
-		var colTypePlayer = publicDb.colTypePlayer = function() { return "player"; };
+		function colTypePlayer() { return "player"; };
+		publicDb.colTypePlayer = colTypePlayer;
 		getCollection(colTypePlayer());
 		
-		var colTypeCharacter = publicDb.colTypeCharacter = function() { return "character"; };
+		function colTypeCharacter() { return "character"; };
+		publicDb.colTypeCharacter = colTypeCharacter;
 		getCollection("character");
 		
-		var colTypeUser = publicDb.colTypeUser = function() { return "user"; };
-		getCollection("user");
+		//function colTypeUser() { return "user"; };
+		//publicDb.colTypeUser = colTypeUser;
+		//getCollection("user");
 
 		// Queues and Queue Functions
 		var documentQueueSet = {}; // allows queueing up objects for more efficient batch database operations
@@ -148,6 +153,18 @@ module.exports = function(dbString, logging, callback) {
 					}
 				});
 			});
+		}
+
+		// Updates
+
+		publicDb.updatePlayer = function(id, portrait) {
+			var players = getCollection(colTypePlayer());
+			players.update({"id": id}, {$set: {"portrait": portrait}});
+		}
+
+		publicDb.updateCharacter = function(id, name, portrait, description) {
+			var characters = getCollection(colTypeCharacter());
+			characters.update({"id": id}, {$set: {"name": name, "portrait": portrait, "description": description}});
 		}
 	}
 }
