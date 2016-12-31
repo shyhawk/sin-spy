@@ -43,20 +43,23 @@ module.exports = function(dbString, logging, callback) {
 		// Queues and Queue Functions
 		var documentQueueSet = {}; // allows queueing up objects for more efficient batch database operations
 
-		publicDb.queuePlayer = function(id, name) {
+		publicDb.queuePlayer = function(id, name, portrait) {
 			var playerData = {
 	            id: id,
 	            name: name,
+	            portrait: portrait,
 	            characters: [],
 	            logs: []
 	        };
 			return queueObject(colTypePlayer(), playerData);
 		};
 
-		publicDb.queueCharacter = function(id, player) {
+		publicDb.queueCharacter = function(id, player, name, portrait) {
 			var characterData = {
 	            id: id,
 	            player: player,
+	            name: name,
+	            portrait: portrait,
 	            logs: []
 	        };
 			return queueObject(colTypeCharacter(), characterData);
@@ -73,10 +76,14 @@ module.exports = function(dbString, logging, callback) {
 
 		publicDb.findOrAddQueued = function(colType, findCallback, addCallback, completeCallback) {
 			findQueued(colType, findCallback, function() {
-				console.log("Finding done! Time to add...");
 				addQueued(colType, addCallback, completeCallback);
 			});
 		};
+
+		publicDb.queuedCount = function(colType) {
+			var queueSet = documentQueueSet[colType];
+			return queueSet ? Object.keys(queueSet).length : 0;
+		}
 
 		function findQueued(colType, findCallback, completeCallback) {
 			var queueSet = documentQueueSet[colType];
@@ -88,7 +95,7 @@ module.exports = function(dbString, logging, callback) {
 			}
 
 			var collection = getCollection(colType);
-			var cursor = collection.find({"id": {$in: idList}});
+			var cursor = collection.find({"id": {$in: idList}}, { "_id": 0, logs: 0 }); // don't include mongodb ID or the full array of logs
 
 			cursor.count(function (err, count) {
 				if (err) {
@@ -96,7 +103,7 @@ module.exports = function(dbString, logging, callback) {
 				}
 
 				if (count === 0) {
-					completeCallback();
+					completeCallback(idList.length);
 					return;
 				}
 
@@ -104,10 +111,10 @@ module.exports = function(dbString, logging, callback) {
 				cursor.forEach(function(doc, index) {
 					counted++;
 					delete queueSet[doc.id];
-					findCallback(doc);
+					if (findCallback) findCallback(doc);
 
 					if (counted === count){
-						completeCallback(); // only fire on final item
+						if (completeCallback) completeCallback(idList.length); // only fire on final item
 					}
 				});
 			});
@@ -120,7 +127,7 @@ module.exports = function(dbString, logging, callback) {
 			});
 
 			if (queued.length === 0) {
-				completeCallback(); // if nothing to insert, just call complete and be done
+				completeCallback(queued.length); // if nothing to insert, just call complete and be done
 				return;
 			}
 
@@ -134,10 +141,10 @@ module.exports = function(dbString, logging, callback) {
 				queued.forEach(function(doc, index) {
 					counted++
 					delete queueSet[doc.id]; // clear from set
-					addCallback(doc);
+					if (addCallback) addCallback(doc);
 
 					if (counted === queued.length) {
-						completeCallback(); // only fire on final item
+						if (completeCallback) completeCallback(queued.length); // only fire on final item
 					}
 				});
 			});

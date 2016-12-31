@@ -101,9 +101,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	            if (!onlinePlayerDataProperty()[playerEntry.id]) { // player just logged in
 	                playerJoined(pData);
 
-	                if (updatePlayerData(pData, entry.portrait, entry.pcId)) {
-	                	// player data updated
-	                }
+	                db.queuePlayer(pData.id, pData.name, pData.portrait);
 
 	                if (!characterEntry) { // logged in without a character (webclient login)
 	                	dataUpdated();
@@ -115,10 +113,8 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	            	var previousCharacterEntry = onlineCharacterDataProperty()[characterEntry.id];
 	            	if (!previousCharacterEntry) { // character just logged in
 		                characterJoined(cData);
-		                // update player name, portrait, and description in case they have changed
-		                if (updateCharacterData(cData, characterEntry.name, characterEntry.portrait, true)) {
-		                	// character data updated
-		                }
+
+		                db.queueCharacter(cData.id, pData.id, cData.name, cData.portrait);
 
 		                dataUpdated();
 		                logging.log("%s logged into %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
@@ -127,7 +123,6 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		            	logging.log("%s as %s switched from %s to %s", characterEntry.player.name, characterEntry.name, previousCharacterEntry.client.name, characterEntry.client.name);
 		            }
 	            }
-
 	            
 	        });
 
@@ -175,7 +170,60 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	        onlinePlayerDataProperty(newOnlinePlayerData);
 	        onlineCharacterDataProperty(newOnlineCharacterData);
+
+	        if (db.queuedCount(db.colTypePlayer())) {
+		        db.findOrAddQueued(db.colTypePlayer()
+	        	,retrievedData(playerData, playerFound)
+	        	,retrievedData(playerData, playerAdded)
+	        	,function() {
+		            logging.log("Player db retrieval completed");
+		        });
+		    }
+
+		    if (db.queuedCount(db.colTypeCharacter())) {
+	            db.findOrAddQueued(db.colTypeCharacter()
+	        	,retrievedData(characterData, characterFound)
+	        	,retrievedData(characterData, characterAdded)
+	        	,function() {
+	            	logging.log("Character db retrieval completed");
+	            });
+	        }
 	    }
+	}
+
+	function retrievedData(localData, callback) {
+		return function(dbData) {
+			var thisData = localData[dbData.id];
+			if (callback) callback(dbData, thisData);
+			mergeLogs(thisData.logs, dbData.lastLog);
+		}
+	}
+
+	function playerFound(dbData, pData) {
+		 // check of portrait was updated
+		updatePlayerData(pData, dbData.portrait, true);
+
+		logging.log("Retrieved player %s", dbData.name);
+	}
+
+	function playerAdded(dbData, pData) {
+		// when first adding a player, consider it clean, since all updatable data was already set on creation
+		delete pData.dirty;
+		logging.log("Added player %s", dbData.name);
+	}
+
+	function characterFound(dbData, cData) {
+        // update character name, portrait, and description in case they have changed
+        updateCharacterData(cData, dbData.name, dbData.portrait, true);
+
+		logging.log("Retrieved character %s", dbData.name);
+	}
+
+	function characterAdded(dbData, cData) {
+		// get character description
+		updateCharacterData(cData, dbData.name, dbData.portrait, true);
+
+		logging.log("Added character %s", dbData.name);
 	}
 
 	function getOrAddPlayer(playerData, entry) {
@@ -184,15 +232,10 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	        pData = playerData[entry.playerId] = {
 	            id: entry.playerId,
 	            name: entry.playerName,
+	            portrait: entry.pcId ? undefined : entry.portrait,
 	            characters: [],
 	            logs: []
 	        };
-
-	        updatePlayerData(pData, entry.portrait, entry.pcId);
-	    } else {
-	    	if (updatePlayerData(pData, entry.portrait, entry.pcId)) {
-	    		// player data updated (portrait)
-	    	}
 	    }
 
 	    return pData;
@@ -206,6 +249,8 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	        cData = characterData[entry.pcId] = {
 	            id: entry.pcId,
 	            player: entry.playerId,
+	            name: entry.pcName,
+	            portrait: entry.portrait,
 	            logs: []
 	        }
 
@@ -235,10 +280,11 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	function joined(logs) {
 		var latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
 		var now = Date.now();
-		// if last log was <= 10 mins ago, strike last quit value and consider the log continued
-		if (latestLog && now - latestLog.quit <= 600000) {
-			latestLog.quit = undefined;
+		// if last log was <= min log time ago, strike last quit value and consider the log continued
+		if (latestLog && now - latestLog.quit <= minLogTime()) {
+			delete latestLog.quit;
 			latestLog.continued = true;
+			delete latestLog.dirty; // continued, ongoing logs are not ready to be sent to db, and so are not considered "dirty"
 		} else { // otherwise create a new log
 		    var newLog = {
 		        joined: Date.now()
@@ -251,41 +297,61 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		// get latest log and add quit time
 	    var latestLog = logs[logs.length - 1];
 	    latestLog.quit = Date.now();
+	    latestLog.dirty = true; // needs to be synced with database
 	    if (latestLog.continued) { // used to tell whether existing logs were modified or if this log is new
 	    	latestLog.continued = undefined;
 	    }
 	}
 
-	function updatePlayerData(pData, portrait, isCharacterPortrait) {
-		if (portrait && !isCharacterPortrait && pData.portrait != portrait) {
-			pData.portrait = portrait;
+	function mergeLogs(logs, latestLog) {
+		if (logs.length === 0)
+			return false; // no logs queued, so nothing to update
+
+		if (!latestLog)
+			return true; // there is no existing latest log, so no merging is necessary, but an update is
+
+		if (logs[0].joined - latestLog.quit <= minLogTime()) {
+			logs[0].joined = latestLog.joined;
+			logs[0].override = true;
+		}
+
+		return true; // merge occurred, and an update is necessary
+	}
+
+	function minLogTime() {
+		return 600000; // equivalent of 10 minutes
+	}
+
+	function updatePlayerData(pData, portrait, pDataHasNewest) {
+		// if the new portrait isn't falsey and the old and new portraits don't match, replace
+		if ((pDataHasNewest ? pData.portrait : portrait) && pData.portrait != portrait) {
+			if (!pDataHasNewest) pData.portrait = portrait;
+			pData.dirty = pData.dirty || true; // portrait was updated
 			return true;
 		}
 		return false;
 	}
 
-	function updateCharacterData(cData, name, portrait, updateDescription) {
-		var cDataUpdated = false;
+	function updateCharacterData(cData, name, portrait, cDataHasNewest, callback) {
+		var updated = false;
 	    // only update character name and portrait if valid new values exist
-	    if (name && name != cData.name) {
-	    	cDataUpdated = true;
-	    	cData.name = name;
+	    if ((cDataHasNewest ? cData.name : name) && name != cData.name) {
+	    	updated = true;
+	    	if (!cDataHasNewest) cData.name = name;
 	    }
-	    if (portrait && portrait != cData.portrait) {
-	    	cDataUpdated = true;
-	    	cData.portrait = portrait;
+	    if ((cDataHasNewest ? cData.portrait : portrait) && portrait != cData.portrait) {
+	    	updated = true;
+	    	if (!cDataHasNewest) cData.portrait = portrait;
 	    }
+        getCharacterDescription(cData.id, function(desc) {
+        	if (desc != cData.description) {
+        		updated = true;
+        		cData.description = desc;
+        	}
 
-	    if (updateDescription) {
-	        getCharacterDescription(cData.id, function(desc) {
-	        	if (desc != cData.description) {
-	        		cDataUpdated = true;
-	        		cData.description = desc;
-	        	}
-	        }); // get description
-	    }
-
-	    return cDataUpdated;
+        	cData.dirty = cData.dirty || updated; // name, portrait, or description were updated
+        	if (callback) callback(cData);
+        }); // get description
 	}
 
 	function getClientName(client) {
