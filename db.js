@@ -27,7 +27,7 @@ module.exports = function(dbString, logging, callback) {
 
 			if (!collectionForType) {
 				collectionForType = collectionTypes[type] = db.collection(type);
-				collectionForType.ensureIndex({"id": 1}, {"unique": true, "name": type.charAt(0) + "id"});
+				//collectionForType.ensureIndex({"id": 1}, {"unique": true, "name": type.charAt(0) + "id"});
 			}
 
 			return collectionForType;
@@ -50,6 +50,7 @@ module.exports = function(dbString, logging, callback) {
 
 		publicDb.queuePlayer = function(id, name, portrait) {
 			var playerData = {
+				_id: id,
 	            id: id,
 	            name: name,
 	            portrait: portrait,
@@ -61,6 +62,7 @@ module.exports = function(dbString, logging, callback) {
 
 		publicDb.queueCharacter = function(id, player, name, portrait) {
 			var characterData = {
+				_id: id,
 	            id: id,
 	            player: player,
 	            name: name,
@@ -100,7 +102,7 @@ module.exports = function(dbString, logging, callback) {
 			}
 
 			var collection = getCollection(colType);
-			var cursor = collection.find({"id": {$in: idList}}, { "_id": 0, logs: 0 }); // don't include mongodb ID or the full array of logs
+			var cursor = collection.find({id: {$in: idList}}, { _id: 0, logs: 0 }); // don't include mongodb ID or the full array of logs
 
 			cursor.count(function (err, count) {
 				if (err) {
@@ -157,14 +159,71 @@ module.exports = function(dbString, logging, callback) {
 
 		// Updates
 
-		publicDb.updatePlayer = function(id, portrait) {
+		publicDb.updatePlayerInfo = function(id, portrait) {
 			var players = getCollection(colTypePlayer());
-			players.update({"id": id}, {$set: {"portrait": portrait}});
-		}
+			players.update({id: id}, {$set: {portrait: portrait}});
+		};
 
-		publicDb.updateCharacter = function(id, name, portrait, description) {
+		publicDb.addCharacterToPlayer = function(id, characterId) {
+			if (!id || !characterId)
+				return;
+
+			var players = getCollection(colTypePlayer());
+			players.update({id: id}, {$addToSet: {characters: characterId}});
+
+			/*if (!characters || characters.length === 0)
+				return;
+
+			var players = getCollection(colTypePlayer());
+			players.update({"id": id}, {$addToSet: {characters: {$each: {characters}}}});*/
+		};
+
+		publicDb.updateCharacterInfo = function(id, name, portrait, description) {
 			var characters = getCollection(colTypeCharacter());
-			characters.update({"id": id}, {$set: {"name": name, "portrait": portrait, "description": description}});
-		}
+			characters.update({id: id}, {$set: {name: name, portrait: portrait, description: description}});
+		};
+
+		publicDb.updateLogs = function(type, id, logs, callback) {
+			var collection = getCollection(type);
+			var logList = [];
+			var replaceLatest = false;
+
+			// make clean copied of log entries
+			logs.forEach(function(log, index) {
+				if (log.quit && !log.synced) {
+					var copiedLog = {joined: log.joined, quit: log.quit};
+					if (log.override)
+						replaceLatest = true;
+
+					logList.push(copiedLog);
+				}
+			});
+
+			var completedUpdates = 0;
+			var updateComplete = function() {
+				completedUpdates++;
+				if (completedUpdates === logList.length && callback)
+					callback();
+			};
+
+			if (logList.length > 0) {
+				if (replaceLatest) {
+					popLatestLog(function() {
+						pushLogs(logList, updateComplete);
+					});
+				} else {
+					pushLogs(logList, updateComplete);
+				}
+			}
+
+			function popLatestLog(callback) {
+				collection.update(
+					{id: id}, {$pop: {logs: 1}}, callback);
+			}
+
+			function pushLogs(logs, callback) {
+				collection.update({id: id}, {$push: {logs: {$each: logList}}, $set: {latestLog: logs[logs.length - 1]}}, callback);
+			}
+		};
 	}
 }

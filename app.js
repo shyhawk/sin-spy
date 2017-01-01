@@ -1,22 +1,23 @@
 var server = require("./server.js")(); // begin server
 
-// On exit
-process.on("exit", function(code) {
-    server.shutdown();
-});
-
 // Ctrl+C exit
 process.on("SIGINT", function() {
-    process.exit(0);
+    cleanExit(0);
 });
 
 // termination signal
 process.on("SIGTERM", function() {
-    process.exit(0);
+    cleanExit(0);
 });
 
 // Error exit
 process.on("uncaughtException", function(err){
     console.dir (err, { depth: null });
-    process.exit (1);
+    cleanExit(1);
 });
+
+function cleanExit(code) {
+	server.shutdown(function() {
+		process.exit(code); // clean shutdown
+	});
+}

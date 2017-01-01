@@ -13,26 +13,39 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	//// Player Data Handling ////
 
-	publicMonitor.cleanup = function cleanLogs(playerData, characterData) {
+	publicMonitor.cleanup = function cleanLogs(playerData, characterData, callback) {
+
+		var playerIds = Object.keys(onlinePlayerDataProperty());
+		var characterIds = Object.keys(onlineCharacterDataProperty());
+
+		var completedLogoffs = 0;
+		var logoffComplete = function() {
+			completedLogoffs++;
+			if (completedLogoffs === playerIds.length + characterIds.length) {
+				logging.log("All logoffs completed successfully");
+				callback();
+			}
+		};
+
 		// Mark all online players as logged off
-		Object.keys(onlinePlayerDataProperty()).forEach(function(playerId, index){
+		playerIds.forEach(function(playerId, index){
 			var pData = playerData[playerId];
-			playerLeft(pData);
+			playerLeft(pData, logoffComplete);
 		});
 
 		// Mark all online characters as logged off
-		Object.keys(onlineCharacterDataProperty()).forEach(function(characterId, index){
+		characterIds.forEach(function(characterId, index){
 			var cData = characterData[characterId];
-			characterLeft(cData, true);
+			characterLeft(cData, logoffComplete);
 		});
 	}
 
-	publicMonitor.update = function updateOnlineData() {
+	publicMonitor.update = function updateOnlineData(completeCallback) {
 	    request("http://nwn.sinfar.net/getonlineplayers.php", function(error, response, body) {
 	        if (!error && response && response.statusCode == 200) {
 	            try {
 	                var parsedJson = JSON.parse(body);
-	                updateData(parsedJson);
+	                updateData(parsedJson, completeCallback);
 	            } catch (e) {
 	                logging.error(e.stack);
 	                throw "Error while updating online data. Application terminated."
@@ -43,7 +56,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	    });
 	}
 
-	function updateData(parsedData) {
+	function updateData(parsedData, completeCallback) {
 		var updated = false;
 		function dataUpdated(){
 			if (!updated) { // if a data update occurs, log a separator line before any other logged output
@@ -171,36 +184,62 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	        onlinePlayerDataProperty(newOnlinePlayerData);
 	        onlineCharacterDataProperty(newOnlineCharacterData);
 
-	        if (db.queuedCount(db.colTypePlayer())) {
-		        db.findOrAddQueued(db.colTypePlayer()
-	        	,retrievedData(playerData, playerFound)
-	        	,retrievedData(playerData, playerAdded)
-	        	,function() {
-		            logging.log("Player db retrieval completed");
-		        });
-		    }
+	        handleQueuedPlayers(); // push queued players to database, then queued characters
 
-		    if (db.queuedCount(db.colTypeCharacter())) {
-	            db.findOrAddQueued(db.colTypeCharacter()
-	        	,retrievedData(characterData, characterFound)
-	        	,retrievedData(characterData, characterAdded)
-	        	,function() {
-	            	logging.log("Character db retrieval completed");
-	            });
+	        function handleQueuedPlayers() {
+		        var playerType = db.colTypePlayer();
+		        if (db.queuedCount(playerType) > 0) {
+			        db.findOrAddQueued(playerType
+		        	,retrievedData(playerData, playerFound, playerType)
+		        	,retrievedData(playerData, playerAdded, playerType)
+		        	,function() {
+			            logging.log("Player db retrieval completed");
+			            handleQueuedCharacters();
+			        });
+			    } else {
+			    	handleQueuedCharacters();
+			    }
+	        }
+
+	        function handleQueuedCharacters() {
+			    var characterType = db.colTypeCharacter();
+			    if (db.queuedCount(characterType) > 0) {
+		            db.findOrAddQueued(characterType
+		        	,retrievedData(characterData, characterFound, characterType)
+		        	,retrievedData(characterData, characterAdded, characterType)
+		        	,function() {
+		            	logging.log("Character db retrieval completed");
+		            	if (completeCallback) completeCallback();
+		            });
+		        } else if (completeCallback) {
+		        	completeCallback();
+		        }
 	        }
 	    }
 	}
 
-	function retrievedData(localData, callback) {
+	function retrievedData(localData, callback, type) {
 		return function(dbData) {
 			var thisData = localData[dbData.id];
 			if (callback) callback(dbData, thisData);
-			mergeLogs(thisData.logs, dbData.lastLog);
+			//console.log("Trying to merge logs...");
+			//console.dir(thisData.logs);
+			var requirePush = mergeLogs(thisData.logs, dbData.latestLog);
+			if (requirePush)
+				pushLogs(type, thisData);
 		}
 	}
 
 	function playerFound(dbData, pData) {
-		 // check of portrait was updated
+		// character logged in while player character list was being retrieved
+		pData.characters.forEach(function(cId, index){
+			if (dbData.characters.indexOf(cId) < 0) {
+				dbData.characters.push(cId);
+			}
+		});
+		pData.characters = dbData.characters; // update player's character list from database
+
+		// check of portrait was updated
 		updatePlayerData(pData, dbData.portrait, true);
 		updatePlayerDb(pData);
 
@@ -231,6 +270,9 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		updateCharacterData(cData, dbData.name, dbData.portrait, true, function(cData) {
         	updateCharacterDb(cData);
         });
+
+		// add character to player's character list both in database and in local data
+		addPlayerCharacter(cData.player, cData.id);
 
 		logging.log("Added character %s", dbData.name);
 	}
@@ -263,11 +305,21 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	            logs: []
 	        }
 
-	        // add character to player's character list
-	        pData.characters.push(entry.pcId);
+	        /*// add character to player's character list, if not already exists
+	        if (!pData.characters.contains(entry.pcId)) {
+	        	pData.characters.push(entry.pcId);
+	        }*/
 	    }
 
 	    return cData;
+	}
+
+	function addPlayerCharacter(playerId, characterId) {
+		var pData = playerData[playerId];
+		if (pData.characters.indexOf(characterId) < 0) {
+			pData.characters.push(characterId);
+			db.addCharacterToPlayer(playerId, characterId);
+		}
 	}
 
 	function playerJoined(pData) {
@@ -278,22 +330,27 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	    joined(cData.logs);
 	}
 
-	function characterLeft(cData) {
+	function characterLeft(cData, callback) {
 	    left(cData.logs);
+	    pushLogs(db.colTypeCharacter(), cData, callback);
 	}
 
-	function playerLeft(pData) {
+	function playerLeft(pData, callback) {
 	    left(pData.logs);
+	    pushLogs(db.colTypePlayer(), pData, callback);
 	}
 
 	function joined(logs) {
 		var latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
 		var now = Date.now();
-		// if last log was <= min log time ago, strike last quit value and consider the log continued
-		if (latestLog && now - latestLog.quit <= minLogTime()) {
-			delete latestLog.quit;
-			latestLog.continued = true;
-			delete latestLog.dirty; // continued, ongoing logs are not ready to be sent to db, and so are not considered "dirty"
+		// if last log was <= min log time ago, strike last quit value to consider the log continued
+		if (latestLog && now - latestLog.quit <= minLogGap()) {
+			delete latestLog.quit; // continued, ongoing logs are not ready to be sent to db
+			if (latestLog.synced) {
+				delete latestLog.synced; // if the log was synced, consider it no longer synced
+				latestLog.override = true; // and indicate that it was overwritten
+			}
+			
 		} else { // otherwise create a new log
 		    var newLog = {
 		        joined: Date.now()
@@ -306,28 +363,35 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		// get latest log and add quit time
 	    var latestLog = logs[logs.length - 1];
 	    latestLog.quit = Date.now();
-	    latestLog.dirty = true; // needs to be synced with database
-	    if (latestLog.continued) { // used to tell whether existing logs were modified or if this log is new
-	    	latestLog.continued = undefined;
-	    }
 	}
 
 	function mergeLogs(logs, latestLog) {
 		if (logs.length === 0)
-			return false; // no logs queued, so nothing to update
+			return false; // no completed logs queued, so nothing to update
 
-		if (!latestLog)
-			return true; // there is no existing latest log, so no merging is necessary, but an update is
-
-		if (logs[0].joined - latestLog.quit <= minLogTime()) {
+		if (latestLog && logs[0].joined - latestLog.quit <= minLogGap()) { // last entry in db will need to be overwritten
 			logs[0].joined = latestLog.joined;
+			delete logs[0].synced; // consider it no longer synced if it had been
 			logs[0].override = true;
 		}
 
-		return true; // merge occurred, and an update is necessary
+		if (logs.length === 1 && !logs[0].quit)
+			return false; // there are no complete logs, so no update is necessary
+		else
+			return true; // there are completed logs, so an update is necessary
 	}
 
-	function minLogTime() {
+	function pushLogs(type, data, callback) {
+		db.updateLogs(type, data.id, data.logs, callback);
+		data.logs.splice(0, data.logs.length - 1); // remove all but the latest log
+		if (data.logs.length === 1 && data.logs[0].quit) {
+			var latestLog = data.logs[0];
+			latestLog.synced = true; // prevent an existing db-synced log from being synced twice
+			delete latestLog.override;
+		}
+	}
+
+	function minLogGap() {
 		return 600000; // equivalent of 10 minutes
 	}
 
@@ -358,7 +422,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
         		cData.description = desc;
         	}
 
-        	cData.dirty = cData.dirty || updated; // name, portrait, or description were updated
+        	if (updated) cData.dirty = true; // name, portrait, or description were updated
         	if (callback) callback(cData);
         }); // get description
 	}
@@ -383,7 +447,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	function updatePlayerDb(pData) {
 		if (pData.dirty) {
-			db.updatePlayer(pData.id, pData.portrait);
+			db.updatePlayerInfo(pData.id, pData.portrait);
 			delete pData.dirty;
 			logging.log("Player %s updated.", pData.name);
 		}
@@ -391,7 +455,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	function updateCharacterDb(cData) {
 		if (cData.dirty) {
-			db.updateCharacter(cData.id, cData.name, cData.portrait, cData.description);
+			db.updateCharacterInfo(cData.id, cData.name, cData.portrait, cData.description);
 			delete cData.dirty;
 			logging.log("Character %s updated", cData.name);
 		}

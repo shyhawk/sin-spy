@@ -37,7 +37,7 @@ module.exports = function() {
 
     require("./db.js")(getEnvVar(process.env.DB_STRING), logging, dbConnected);
 
-    publicServer.shutdown = function() {
+    publicServer.shutdown = function(callback) {
         console.log("#### Server was shut down before being fully initialized ####");
     };
 
@@ -63,12 +63,13 @@ module.exports = function() {
         }, logging);
 
         // initial call
-        monitor.update();
-        // check for updates every interval
         var pollFreq = getEnvVar(process.env.POLL_FREQ) || 15000; // default to every 15 seconds
-        var runInterval = setInterval(function() {
-            monitor.update();
-        }, pollFreq);
+        var runInterval;
+        monitor.update(function() { // check for updates every interval
+            runInterval = setInterval(function() {
+                monitor.update();
+            }, pollFreq);
+        });
 
         /*db.queuePlayer("30", "Last Beaver Standing");
         db.queuePlayer("37", "Mavrixio");
@@ -105,23 +106,24 @@ module.exports = function() {
         }
 
         // set up function call for graceful server shutdown
-        publicServer.shutdown = function shutdown() {
+        publicServer.shutdown = function shutdown(callback) {
             console.log("\n#### Shutting down server... ####");
-            clearInterval(runInterval);
-            clearInterval(wakeInterval);
+            if (runInterval) clearInterval(runInterval);
+            if (wakeInterval) clearInterval(wakeInterval);
+
+            // Make copies of data (to avoid modifying originals)
+            var playerDataCopy = JSON.parse(JSON.stringify(playerData));
+            var characterDataCopy = JSON.parse(JSON.stringify(characterData));
 
             if (playerDataFile && characterDataFile) {
-                // Make copies of data (to avoid modifying originals)
-                var playerDataCopy = JSON.parse(JSON.stringify(playerData));
-                var characterDataCopy = JSON.parse(JSON.stringify(characterData));
-
-                monitor.clean(playerDataCopy, characterDataCopy);
-
                 saveData(playerDataFile, playerDataCopy);
                 saveData(characterDataFile, characterDataCopy);
             } else {
                 logging.warn("Data not saved.");
             }
+
+            logging.log("Cleaning up...");
+            monitor.cleanup(playerDataCopy, characterDataCopy, callback);
         }
 
         // get dump of player data
