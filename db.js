@@ -27,7 +27,6 @@ module.exports = function(dbString, logging, callback) {
 
 			if (!collectionForType) {
 				collectionForType = collectionTypes[type] = db.collection(type);
-				//collectionForType.ensureIndex({"id": 1}, {"unique": true, "name": type.charAt(0) + "id"});
 			}
 
 			return collectionForType;
@@ -45,7 +44,8 @@ module.exports = function(dbString, logging, callback) {
 		//publicDb.colTypeUser = colTypeUser;
 		//getCollection("user");
 
-		// Queues and Queue Functions
+		//// Queues and Queue Functions ////
+
 		var documentQueueSet = {}; // allows queueing up objects for more efficient batch database operations
 
 		publicDb.queuePlayer = function(id, name, portrait) {
@@ -157,12 +157,7 @@ module.exports = function(dbString, logging, callback) {
 			});
 		}
 
-		// Updates
-
-		publicDb.updatePlayerInfo = function(id, portrait) {
-			var players = getCollection(colTypePlayer());
-			players.update({id: id}, {$set: {portrait: portrait}});
-		};
+		//// Data Updates ////
 
 		publicDb.addCharacterToPlayer = function(id, characterId) {
 			if (!id || !characterId)
@@ -170,12 +165,11 @@ module.exports = function(dbString, logging, callback) {
 
 			var players = getCollection(colTypePlayer());
 			players.update({id: id}, {$addToSet: {characters: characterId}});
+		};
 
-			/*if (!characters || characters.length === 0)
-				return;
-
+		publicDb.updatePlayerInfo = function(id, portrait) {
 			var players = getCollection(colTypePlayer());
-			players.update({"id": id}, {$addToSet: {characters: {$each: {characters}}}});*/
+			players.update({id: id}, {$set: {portrait: portrait}});
 		};
 
 		publicDb.updateCharacterInfo = function(id, name, portrait, description) {

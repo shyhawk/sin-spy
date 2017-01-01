@@ -181,54 +181,86 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	            }
 	        });
 
+	        // assign new data to properties
 	        onlinePlayerDataProperty(newOnlinePlayerData);
 	        onlineCharacterDataProperty(newOnlineCharacterData);
 
-	        handleQueuedPlayers(); // push queued players to database, then queued characters
-
-	        function handleQueuedPlayers() {
-		        var playerType = db.colTypePlayer();
-		        if (db.queuedCount(playerType) > 0) {
-			        db.findOrAddQueued(playerType
-		        	,retrievedData(playerData, playerFound, playerType)
-		        	,retrievedData(playerData, playerAdded, playerType)
-		        	,function() {
-			            logging.log("Player db retrieval completed");
-			            handleQueuedCharacters();
-			        });
-			    } else {
-			    	handleQueuedCharacters();
-			    }
-	        }
-
-	        function handleQueuedCharacters() {
-			    var characterType = db.colTypeCharacter();
-			    if (db.queuedCount(characterType) > 0) {
-		            db.findOrAddQueued(characterType
-		        	,retrievedData(characterData, characterFound, characterType)
-		        	,retrievedData(characterData, characterAdded, characterType)
-		        	,function() {
-		            	logging.log("Character db retrieval completed");
-		            	if (completeCallback) completeCallback();
-		            });
-		        } else if (completeCallback) {
-		        	completeCallback();
-		        }
-	        }
+		    var playerType = db.colTypePlayer();
+		    var characterType = db.colTypeCharacter();
+		    // push queued players to database, then queued characters
+	        handleQueuedPlayers(playerType, playerData, function() {
+	        	handleQueuedCharacters(characterType, characterData, function() {
+	        		// indicate all players and characters are retrieved by running callback
+	        		if (completeCallback) completeCallback();
+	        	});
+	        });
 	    }
 	}
 
+	// initialize local data for players
+	function getOrAddPlayer(playerData, entry) {
+	    var pData = playerData[entry.playerId];
+	    if (!pData) { // player has no record, so create one
+	        pData = playerData[entry.playerId] = {
+	            id: entry.playerId,
+	            name: entry.playerName,
+	            portrait: entry.pcId ? undefined : entry.portrait,
+	            characters: [],
+	            logs: []
+	        };
+	    }
+
+	    return pData;
+	}
+
+	// initialize local data for characters
+	function getOrAddCharacter(characterData, pData, entry) {
+	    if (!entry.pcId) return null; // ignore for entries without character data
+
+	    var cData = characterData[entry.pcId];
+	    if (!cData) { // character has no record, so create one
+	        cData = characterData[entry.pcId] = {
+	            id: entry.pcId,
+	            player: entry.playerId,
+	            name: entry.pcName,
+	            portrait: entry.portrait,
+	            logs: []
+	        }
+	    }
+
+	    return cData;
+	}
+
+	//// Local Data Set-Up ////
+
+	// generically get data and merge/push logs where necessary
 	function retrievedData(localData, callback, type) {
 		return function(dbData) {
 			var thisData = localData[dbData.id];
 			if (callback) callback(dbData, thisData);
-			//console.log("Trying to merge logs...");
-			//console.dir(thisData.logs);
+
+			// merge and update logs if there was logging while data was retrieved from database
 			var requirePush = mergeLogs(thisData.logs, dbData.latestLog);
 			if (requirePush)
 				pushLogs(type, thisData);
 		}
 	}
+
+    function handleQueuedPlayers(playerType, playerData, callback) {
+	    if (db.queuedCount(playerType) > 0) {
+	        db.findOrAddQueued(playerType
+	    	,retrievedData(playerData, playerFound, playerType)
+	    	,retrievedData(playerData, playerAdded, playerType)
+	    	,function() {
+	            logging.log("Player db retrieval completed");
+	            if (callback) callback();
+	        });
+	    } else if (callback) {
+	    	callback();
+	    }
+	}
+
+	//// Maintaining Player/Character Data ////
 
 	function playerFound(dbData, pData) {
 		// character logged in while player character list was being retrieved
@@ -250,6 +282,20 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		// when first adding a player, consider it clean, since all updatable data was already set on creation
 		delete pData.dirty;
 		logging.log("Added player %s", dbData.name);
+	}
+
+	function handleQueuedCharacters(characterType, characterData, callback) {
+	    if (db.queuedCount(characterType) > 0) {
+	        db.findOrAddQueued(characterType
+	    	,retrievedData(characterData, characterFound, characterType)
+	    	,retrievedData(characterData, characterAdded, characterType)
+	    	,function() {
+	        	logging.log("Character db retrieval completed");
+	        	if (callback) callback();
+	        });
+	    } else if (callback) {
+	    	callback();
+	    }
 	}
 
 	function characterFound(dbData, cData) {
@@ -277,50 +323,82 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		logging.log("Added character %s", dbData.name);
 	}
 
-	function getOrAddPlayer(playerData, entry) {
-	    var pData = playerData[entry.playerId];
-	    if (!pData) { // player has no record, so create one
-	        pData = playerData[entry.playerId] = {
-	            id: entry.playerId,
-	            name: entry.playerName,
-	            portrait: entry.pcId ? undefined : entry.portrait,
-	            characters: [],
-	            logs: []
-	        };
-	    }
-
-	    return pData;
-	}
-
-	function getOrAddCharacter(characterData, pData, entry) {
-	    if (!entry.pcId) return null; // ignore for entries without character data
-
-	    var cData = characterData[entry.pcId];
-	    if (!cData) { // character has no record, so create one
-	        cData = characterData[entry.pcId] = {
-	            id: entry.pcId,
-	            player: entry.playerId,
-	            name: entry.pcName,
-	            portrait: entry.portrait,
-	            logs: []
-	        }
-
-	        /*// add character to player's character list, if not already exists
-	        if (!pData.characters.contains(entry.pcId)) {
-	        	pData.characters.push(entry.pcId);
-	        }*/
-	    }
-
-	    return cData;
-	}
-
 	function addPlayerCharacter(playerId, characterId) {
 		var pData = playerData[playerId];
+		// if character is new, push to local and database character list for player
 		if (pData.characters.indexOf(characterId) < 0) {
 			pData.characters.push(characterId);
 			db.addCharacterToPlayer(playerId, characterId);
 		}
 	}
+
+	function updatePlayerData(pData, portrait, pDataHasNewest) {
+		// if the new portrait isn't falsey and the old and new portraits don't match, replace
+		if ((pDataHasNewest ? pData.portrait : portrait) && pData.portrait != portrait) {
+			if (!pDataHasNewest) pData.portrait = portrait;
+			pData.dirty = pData.dirty || true; // portrait was updated
+			return true;
+		}
+		return false;
+	}
+
+	function updatePlayerDb(pData) {
+		if (pData.dirty) {
+			db.updatePlayerInfo(pData.id, pData.portrait);
+			delete pData.dirty;
+			logging.log("Player %s updated.", pData.name);
+		}
+	}
+
+	var activeDescRequests = 0; // hold number of description requests that have yet to complete
+
+	function updateCharacterData(cData, name, portrait, cDataHasNewest, callback) {
+		var updated = false;
+	    // only update character name and portrait if valid new values exist
+	    if ((cDataHasNewest ? cData.name : name) && name != cData.name) {
+	    	updated = true;
+	    	if (!cDataHasNewest) cData.name = name;
+	    }
+
+	    if ((cDataHasNewest ? cData.portrait : portrait) && portrait != cData.portrait) {
+	    	updated = true;
+	    	if (!cDataHasNewest) cData.portrait = portrait;
+	    }
+
+	    // get description and callback when complete
+        getCharacterDescription(cData.id, function(desc) {
+        	if (desc != cData.description) {
+        		updated = true;
+        		cData.description = desc;
+        	}
+
+        	if (updated) cData.dirty = true; // name, portrait, or description were updated
+        	if (callback) callback(cData);
+        });
+	}
+
+	function getCharacterDescription(characterId, callback) {
+		activeDescRequests++;
+	    request("http://nwn.sinfar.net/getcharbio.php?pc_id=" + characterId, function(error, response, body) {
+	        if (!error && response && response.statusCode == 200) {
+	            callback(/^ERROR[0-9]*$/.test(body) ? "" : body); // ignore description error codes
+	        } else {
+	            logging.error("Error %s: \"%s\" when acquiring character %s description", response ? response.statusCode : "", error, characterId);
+	        }
+
+	        logging.log("Description request completed. %d remaining.", --activeDescRequests);
+	    });
+	}
+
+	function updateCharacterDb(cData) {
+		if (cData.dirty) {
+			db.updateCharacterInfo(cData.id, cData.name, cData.portrait, cData.description);
+			delete cData.dirty;
+			logging.log("Character %s updated", cData.name);
+		}
+	}
+
+	//// Logging ////
 
 	function playerJoined(pData) {
 		joined(pData.logs);
@@ -395,70 +473,10 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		return 600000; // equivalent of 10 minutes
 	}
 
-	function updatePlayerData(pData, portrait, pDataHasNewest) {
-		// if the new portrait isn't falsey and the old and new portraits don't match, replace
-		if ((pDataHasNewest ? pData.portrait : portrait) && pData.portrait != portrait) {
-			if (!pDataHasNewest) pData.portrait = portrait;
-			pData.dirty = pData.dirty || true; // portrait was updated
-			return true;
-		}
-		return false;
-	}
-
-	function updateCharacterData(cData, name, portrait, cDataHasNewest, callback) {
-		var updated = false;
-	    // only update character name and portrait if valid new values exist
-	    if ((cDataHasNewest ? cData.name : name) && name != cData.name) {
-	    	updated = true;
-	    	if (!cDataHasNewest) cData.name = name;
-	    }
-	    if ((cDataHasNewest ? cData.portrait : portrait) && portrait != cData.portrait) {
-	    	updated = true;
-	    	if (!cDataHasNewest) cData.portrait = portrait;
-	    }
-        getCharacterDescription(cData.id, function(desc) {
-        	if (desc != cData.description) {
-        		updated = true;
-        		cData.description = desc;
-        	}
-
-        	if (updated) cData.dirty = true; // name, portrait, or description were updated
-        	if (callback) callback(cData);
-        }); // get description
-	}
+	//// MISC ////
 
 	function getClientName(client) {
 	    return clients[client] || (client === null ? "Offline" : "Other");
-	}
-
-	var activeDescRequests = 0;
-	function getCharacterDescription(characterId, callback) {
-		activeDescRequests++;
-	    request("http://nwn.sinfar.net/getcharbio.php?pc_id=" + characterId, function(error, response, body) {
-	        if (!error && response && response.statusCode == 200) {
-	            callback(/^ERROR[0-9]*$/.test(body) ? "" : body); // ignore error codes
-	        } else {
-	            logging.error("Error %s: \"%s\" when acquiring character %s description", response ? response.statusCode : "", error, characterId);
-	        }
-
-	        logging.log("Description request completed. %d remaining.", --activeDescRequests);
-	    });
-	}
-
-	function updatePlayerDb(pData) {
-		if (pData.dirty) {
-			db.updatePlayerInfo(pData.id, pData.portrait);
-			delete pData.dirty;
-			logging.log("Player %s updated.", pData.name);
-		}
-	}
-
-	function updateCharacterDb(cData) {
-		if (cData.dirty) {
-			db.updateCharacterInfo(cData.id, cData.name, cData.portrait, cData.description);
-			delete cData.dirty;
-			logging.log("Character %s updated", cData.name);
-		}
 	}
 
 	return publicMonitor;

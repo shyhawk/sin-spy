@@ -71,31 +71,6 @@ module.exports = function() {
             }, pollFreq);
         });
 
-        /*db.queuePlayer("30", "Last Beaver Standing");
-        db.queuePlayer("37", "Mavrixio");
-        db.queuePlayer("89", "Rosekiss");
-
-        db.queueCharacter("54427", "Licere Auvreen");
-        db.queueCharacter("52622", "Lillith");
-        db.queueCharacter("70464", "Linde");
-
-        function found(doc) {
-            console.log("Found:");
-            console.dir(doc);
-        }
-
-        function added(doc) {
-            console.log("Added:");
-            console.dir(doc);
-        }
-
-        db.findOrAddQueued(db.colTypePlayer(), found, added, function() {
-            console.log("Players completed");
-            db.findOrAddQueued(db.colTypeCharacter(), found, added, function() {
-                console.log("Characters completed");
-            });
-        });*/
-
         // prevent Heroku app from sleeping by having it wake itself up
         var wakeInterval;
         var appUrl = getEnvVar(process.env.APP_URL);
