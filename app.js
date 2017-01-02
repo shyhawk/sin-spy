@@ -7,6 +7,7 @@ process.on("SIGINT", function() {
 
 // termination signal
 process.on("SIGTERM", function() {
+	console.log("SIGTERM called");
     cleanExit(0);
 });
 
