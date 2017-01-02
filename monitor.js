@@ -39,6 +39,8 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 			var cData = characterData[characterId];
 			characterLeft(cData, logoffComplete);
 		});
+
+		console.log("All logoff requests made...");
 	}
 
 	publicMonitor.update = function updateOnlineData(completeCallback) {
@@ -416,7 +418,6 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	function playerLeft(pData, callback) {
 	    left(pData.logs);
-	    console.log("Pushing player log...");
 	    pushLogs(db.colTypePlayer(), pData, callback);
 	}
 

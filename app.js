@@ -19,7 +19,7 @@ process.on("uncaughtException", function(err){
 
 function cleanExit(code) {
 	server.shutdown(function() {
-		console.log("Cleaned successfully. Shutdown.");
+		console.log("Cleanup successful. Shutdown.");
 		process.exit(code); // clean shutdown
 	});
 }
