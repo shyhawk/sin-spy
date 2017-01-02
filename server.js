@@ -97,7 +97,7 @@ module.exports = function() {
                 logging.warn("Data not saved.");
             }
 
-            logging.log("Cleaning up...");
+            console.log("Cleaning up...");
             monitor.cleanup(playerDataCopy, characterDataCopy, callback);
         }
 

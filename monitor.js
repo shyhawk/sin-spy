@@ -20,6 +20,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 		var completedLogoffs = 0;
 		var logoffComplete = function() {
+			logging.warn("Logoff complete. %d remaining.", playerIds.length + characterIds.length - completedLogoffs);
 			completedLogoffs++;
 			if (completedLogoffs === playerIds.length + characterIds.length) {
 				console.log("All logoffs completed successfully");
