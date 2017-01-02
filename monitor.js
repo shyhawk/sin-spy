@@ -22,7 +22,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		var logoffComplete = function() {
 			completedLogoffs++;
 			if (completedLogoffs === playerIds.length + characterIds.length) {
-				logging.log("All logoffs completed successfully");
+				console.log("All logoffs completed successfully");
 				callback();
 			}
 		};
