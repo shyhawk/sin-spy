@@ -29,12 +29,14 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		};
 
 		// Mark all online players as logged off
+		console.log("Sending player logoff requests...")
 		playerIds.forEach(function(playerId, index){
 			var pData = playerData[playerId];
 			playerLeft(pData, logoffComplete);
 		});
 
 		// Mark all online characters as logged off
+		console.log("Sending character logoff requests...");
 		characterIds.forEach(function(characterId, index){
 			var cData = characterData[characterId];
 			characterLeft(cData, logoffComplete);
