@@ -416,6 +416,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	function playerLeft(pData, callback) {
 	    left(pData.logs);
+	    console.log("Pushing player log...");
 	    pushLogs(db.colTypePlayer(), pData, callback);
 	}
 
