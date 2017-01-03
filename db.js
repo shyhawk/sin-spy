@@ -78,6 +78,7 @@ module.exports = function(dbString, logging, callback) {
 				queueSet = documentQueueSet[type] = {};
 
 			queueSet[data.id] = data;
+			
 			return data;
 		}
 

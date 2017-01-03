@@ -81,7 +81,7 @@ module.exports = function() {
         }
 
         // set up function call for graceful server shutdown
-        publicServer.shutdown = function shutdown(callback) {
+        publicServer.shutdown = function (callback) {
             console.log("\n#### Shutting down server... ####");
             if (runInterval) clearInterval(runInterval);
             if (wakeInterval) clearInterval(wakeInterval);

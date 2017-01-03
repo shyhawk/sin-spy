@@ -13,18 +13,16 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	//// Player Data Handling ////
 
-	publicMonitor.cleanup = function cleanLogs(playerData, characterData, callback) {
-
+	publicMonitor.cleanup = function(playerData, characterData, callback) {
 		var playerIds = Object.keys(onlinePlayerDataProperty());
 		var characterIds = Object.keys(onlineCharacterDataProperty());
 
 		var completedLogoffs = 0;
 		var logoffComplete = function() {
-			logging.warn("Logoff complete. %d remaining.", playerIds.length + characterIds.length - completedLogoffs);
 			completedLogoffs++;
 			if (completedLogoffs === playerIds.length + characterIds.length) {
 				console.log("All logoffs completed successfully");
-				callback();
+				if (callback) callback();
 			}
 		};
 
@@ -32,27 +30,40 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		console.log("Sending player logoff requests...")
 		playerIds.forEach(function(playerId, index){
 			var pData = playerData[playerId];
-			playerLeft(pData, logoffComplete);
+			playerLeft(pData, logoffComplete); // log off player and sync to database
 		});
 
 		// Mark all online characters as logged off
 		console.log("Sending character logoff requests...");
 		characterIds.forEach(function(characterId, index){
 			var cData = characterData[characterId];
-			characterLeft(cData, logoffComplete);
+			characterLeft(cData, logoffComplete); // log off character and sync to database
 		});
 
 		console.log("All logoff requests made...");
-	}
+	};
 
-	publicMonitor.update = function updateOnlineData(completeCallback) {
+	var firstUpdate = true;
+	var lastBackup = Date.now(); // when last backup of latest logs occurred
+	publicMonitor.update = function (completeCallback) {
 	    request("http://nwn.sinfar.net/getonlineplayers.php", function(error, response, body) {
 	        if (!error && response && response.statusCode == 200) {
 	            try {
 	                var parsedJson = JSON.parse(body);
-	                updateData(parsedJson, completeCallback);
+	                updateData(parsedJson, function() {
+	                	if (firstUpdate) firstUpdate = false; // indicate first update has completed
+	                	if (Date.now() - lastBackup >= backupFreq()) {
+	                		lastBackup = Date.now();
+	                		// perform backup
+	                		backupActiveLogs(playerData, characterData, function() {
+	                			if (completeCallback) completeCallback();
+	                		});
+	                	} else {
+	                		if (completeCallback) completeCallback();
+	                	}
+	                });
 	            } catch (e) {
-	                logging.error(e.stack);
+	                logging.error(e);
 	                throw "Error while updating online data. Application terminated."
 	            }
 	        } else {
@@ -73,6 +84,10 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	    if (parsedData) {
 	        var newOnlinePlayerData = {};
 	        var newOnlineCharacterData = {};
+
+	        // set of players and characters that have logged in so far (to prevent being processed multiple times)
+	        var joinedPlayerSet = {};
+	        var joinedCharacterSet = {};
 
 	        parsedData.forEach(function(entry, index) {
 	        	var playerEntry = newOnlinePlayerData[entry.playerId];
@@ -116,7 +131,9 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	            var cData = getOrAddCharacter(characterData, pData, entry);
 
-	            if (!onlinePlayerDataProperty()[playerEntry.id]) { // player just logged in
+	            if (!onlinePlayerDataProperty()[playerEntry.id] && !joinedPlayerSet[playerEntry.id]) { // player just logged in
+	            	joinedPlayerSet[playerEntry.id] = playerEntry.id; // player has been processed as joined
+
 	                playerJoined(pData);
 
 	                db.queuePlayer(pData.id, pData.name, pData.portrait);
@@ -129,17 +146,21 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	            if (characterEntry) {
 	            	var previousCharacterEntry = onlineCharacterDataProperty()[characterEntry.id];
-	            	if (!previousCharacterEntry) { // character just logged in
-		                characterJoined(cData);
+	            	if (!joinedCharacterSet[characterEntry.id]) {
+	            		joinedCharacterSet[characterEntry.id] = characterEntry.id; // character has been processed as joined
 
-		                db.queueCharacter(cData.id, pData.id, cData.name, cData.portrait);
+		            	if (!previousCharacterEntry) { // character just logged in
+			                characterJoined(cData);
 
-		                dataUpdated();
-		                logging.log("%s logged into %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
-		            } else if (characterEntry.client.id !== previousCharacterEntry.client.id) {
-		            	dataUpdated(); // character client (server) change
-		            	logging.log("%s as %s switched from %s to %s", characterEntry.player.name, characterEntry.name, previousCharacterEntry.client.name, characterEntry.client.name);
-		            }
+			                db.queueCharacter(cData.id, pData.id, cData.name, cData.portrait);
+
+			                dataUpdated();
+			                logging.log("%s logged into %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
+			            } else if (characterEntry.client.id !== previousCharacterEntry.client.id) {
+			            	dataUpdated(); // character client (server) change
+			            	logging.log("%s as %s switched from %s to %s", characterEntry.player.name, characterEntry.name, previousCharacterEntry.client.name, characterEntry.client.name);
+			            }
+			        }
 	            }
 	            
 	        });
@@ -149,7 +170,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	            return !newOnlineCharacterData[id];
 	        });
 
-	        // log out charcaters that have left
+	        // log out characters that have left
 	        leftCharacters.forEach(function(characterId, index) {
 	        	var cData = characterData[characterId];
 	        	if (cData) {
@@ -201,6 +222,36 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	        });
 	    }
 	}
+
+	function backupActiveLogs(playerData, characterData, callback){
+		var playerIds = Object.keys(onlinePlayerDataProperty());
+		var characterIds = Object.keys(onlineCharacterDataProperty());
+
+		var completedLogoffs = 0;
+		var backupComplete = function() {
+			completedLogoffs++;
+			if (completedLogoffs === playerIds.length + characterIds.length) {
+				logging.log("---- All active log backups completed successfully ----");
+				if (callback) callback();
+			}
+		};
+
+		// Mark all online players as logged off
+		logging.log("Sending player active log backup requests...")
+		playerIds.forEach(function(playerId, index){
+			var pData = playerData[playerId];
+			backupLogs(db.colTypePlayer(), pData, backupComplete); // temporarily back up logs to database
+		});
+
+		// Mark all online characters as logged off
+		logging.log("Sending character active log backup requests...");
+		characterIds.forEach(function(characterId, index){
+			var cData = characterData[characterId];
+			backupLogs(db.colTypeCharacter(), cData, backupComplete); // temporarily back up logs to database
+		});
+
+		console.log("All active log backup requests made...");
+	};
 
 	// initialize local data for players
 	function getOrAddPlayer(playerData, entry) {
@@ -427,7 +478,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		var latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
 		var now = Date.now();
 		// if last log was <= min log time ago, strike last quit value to consider the log continued
-		if (latestLog && now - latestLog.quit <= minLogGap()) {
+		if (latestLog && now - latestLog.quit <= getLogGap()) {
 			delete latestLog.quit; // continued, ongoing logs are not ready to be sent to db
 			if (latestLog.synced) {
 				delete latestLog.synced; // if the log was synced, consider it no longer synced
@@ -452,7 +503,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		if (logs.length === 0)
 			return false; // no completed logs queued, so nothing to update
 
-		if (latestLog && logs[0].joined - latestLog.quit <= minLogGap()) { // last entry in db will need to be overwritten
+		if (latestLog && logs[0].joined - latestLog.quit <= getLogGap()) { // last entry in db will need to be overwritten
 			logs[0].joined = latestLog.joined;
 			delete logs[0].synced; // consider it no longer synced if it had been
 			logs[0].override = true;
@@ -474,8 +525,30 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		}
 	}
 
+	function backupLogs(type, data, callback) { // backup latest log to DB and mark it to be overwritten on logout
+		if (data.logs.length > 0) {
+			var latestLog = data.logs[data.logs.length - 1];
+			if (!latestLog.quit) {
+				var logs = [{joined: latestLog.joined, quit: Date.now(), override: true}];
+				db.updateLogs(type, data.id, logs, callback);
+				latestLog.override = true; // force 
+				return;
+			}
+		}
+		if (callback) callback();
+	}
+
+	function getLogGap() { // allow longer gap on initial start-up in case app was shut down suddenly
+		// on firstUpdate, add extra 2 minute allowance to account for time cost backing up records
+		return firstUpdate ? backupFreq() + 120000 : minLogGap();
+	}
+
 	function minLogGap() {
 		return 600000; // equivalent of 10 minutes
+	}
+
+	function backupFreq() {
+		return 1800000; // equivalent of 30 minutes
 	}
 
 	//// MISC ////
