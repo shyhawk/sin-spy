@@ -106,30 +106,39 @@ module.exports = function(dbString, logging, callback) {
 				return;
 			}
 
-			var collection = getCollection(colType);
-			var cursor = collection.find({id: {$in: idList}}, { _id: 0, logs: 0 }); // don't include mongodb ID or the full array of logs
-
-			cursor.count(function (err, count) {
+			findForType(colType, idList, function(err, doc) {
 				if (err) {
 					throw(err);
 				}
 
-				if (count === 0) {
-					completeCallback(idList.length);
-					return;
-				}
-
-				var counted = 0;
-				cursor.forEach(function(doc, index) {
-					counted++;
+				if (doc) {
 					delete queueSet[doc.id];
 					if (findCallback) findCallback(doc);
-
-					if (counted === count){
-						if (completeCallback) completeCallback(idList.length); // only fire on final item
-					}
-				});
+				} else { // doc is null when complete
+					if (completeCallback) completeCallback(idList.length); // only fire on final item
+				}
 			});
+		}
+
+		function findForType(colType, idList, eachDocCallback) {
+			// build functions
+			var collection = getCollection(colType);
+
+			if (colType === colTypeCharacter()) {
+				collection.aggregate([
+					{$match: {id: {$in: idList}}},
+					{$lookup: {from: colTypePlayer(), localField: "id", foreignField: "characters", as: "playersSet"}},
+					{$project: {
+						id: 1,
+						name: 1,
+						portrait: 1,
+						description: 1,
+						players: "$playersSet.id"
+					}}
+				]).each(eachDocCallback);
+			} else if (colType === colTypePlayer()) {
+				collection.find({id: {$in: idList}}, { _id: 0, logs: 0 }).each(eachDocCallback); // don't include mongodb ID or the full array of logs
+			}
 		}
 
 		function addQueued(colType, addCallback, completeCallback) {
@@ -164,21 +173,18 @@ module.exports = function(dbString, logging, callback) {
 
 		//// Data Updates ////
 
-		publicDb.addCharacterToPlayer = function(id, characterId) {
-			if (!id || !characterId)
+		publicDb.addCharactersToPlayer = function(id, characters) {
+			var isArray = Array.isArray(characters); // accept array or single value
+			if (!id || !characters || (isArray && characters.length === 0))
 				return;
 
 			var players = getCollection(colTypePlayer());
-			players.update({id: id}, {$addToSet: {characters: characterId}});
+			if (isArray) {
+				players.update({id: id}, {$addToSet: {characters: {$each: characters}}});
+			} else {
+				players.update({id: id}, {$addToSet: {characters: characters}});
+			}
 		};
-
-		publicDb.addPlayerToCharacter = function(id, playerId) {
-			if (!id || !playerId)
-				return;
-
-			var characters = getCollection(colTypeCharacter());
-			characters.update({id: id}, {$addToSet: {players: playerId}, $unset: {player:1}}); // add to/create players set and delete player field, if present
-		}
 
 		publicDb.updatePlayerInfo = function(id, portrait) {
 			var players = getCollection(colTypePlayer());

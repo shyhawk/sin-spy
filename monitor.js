@@ -142,13 +142,6 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	                if (!characterEntry) { // logged in without a character (webclient login)
 	                	dataUpdated();
 	                    logging.log("%s logged into %s", playerEntry.name, playerEntry.latestClient().name);
-	                } else if (cData) {
-				        // create or add to temporary set of players for this character
-				        if (!cData.tempPlayers) cData.tempPlayers = [];
-
-				        if (cData.tempPlayers.indexOf(entry.playerId) < 0) {
-				        	cData.tempPlayers.push(entry.playerId);
-				        }
 	                }
 	            }
 
@@ -159,6 +152,8 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 		            	if (!previousCharacterEntry) { // character just logged in
 			                characterJoined(cData, pData.id);
+
+			                linkPlayerAndCharacter(pData, cData);
 
 			                db.queueCharacter(cData.id, cData.name, cData.portrait);
 
@@ -285,9 +280,9 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	    if (!cData) { // character has no record, so create one
 	        cData = characterData[entry.pcId] = {
 	            id: entry.pcId,
-	            players: [],
 	            name: entry.pcName,
 	            portrait: entry.portrait,
+	            players: [],
 	            logs: []
 	        }
 	    }
@@ -327,13 +322,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	//// Maintaining Player/Character Data ////
 
 	function playerFound(dbData, pData) {
-		// character logged in while player character list was being retrieved
-		pData.characters.forEach(function(cId, index){
-			if (dbData.characters.indexOf(cId) < 0) {
-				dbData.characters.push(cId);
-			}
-		});
-		pData.characters = dbData.characters; // update player's character list from database
+		setPlayerData(dbData, pData);
 
 		// check of portrait was updated
 		updatePlayerData(pData, dbData.portrait, true);
@@ -343,9 +332,27 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	}
 
 	function playerAdded(dbData, pData) {
+		setPlayerData(dbData, pData);
+
 		// when first adding a player, consider it clean, since all updatable data was already set on creation
 		delete pData.dirty;
 		logging.log("Added player %s", dbData.name);
+	}
+
+	function setPlayerData(dbData, pData) {
+		var oldCharacterSet = pData.characters;
+		pData.characters = dbData.characters; // update player's character list from database
+		var newCharacters = [];
+
+		// character logged in while player character list was being retrieved
+		oldCharacterSet.forEach(function(cId, index){
+			if (pData.characters.indexOf(cId) < 0) {
+				pData.characters.push(cId);
+				newCharacters.push(cId);
+			}
+		});
+
+		db.addCharactersToPlayer(pData.id, newCharacters);		
 	}
 
 	function handleQueuedCharacters(characterType, characterData, callback) {
@@ -376,39 +383,31 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	function setCharacterData(dbData, cData) {
 		cData.description = dbData.description; // must manually set description
-		if (dbData.players) cData.players = dbData.players; // get from database, if exists
+
+		if (dbData.players) {
+			var oldPlayerSet = cData.players;
+			cData.players = dbData.players; // gotten from database "join"
+			oldPlayerSet.forEach(function (pId, index) {
+				if (cData.players.indexOf(pId) < 0) {
+					cData.players.push(pId);
+				}
+			});
+		}
 
         // update character name, portrait, and description in case they have changed
         updateCharacterData(cData, dbData.name, dbData.portrait, true, function(cData) {
         	updateCharacterDb(cData);
         });
-
-		// add character to player's character list both in db and locally, if it doesn't exist
-		if (cData.tempPlayers) {
-			cData.tempPlayers.forEach(function (playerId, index) {
-				addPlayerToCharacter(playerId, cData.id);
-				addCharacterToPlayer(cData.id, playerId);
-			});
-			delete cData.tempPlayers; // clean up after
-		}
-	}
-
-	function addPlayerToCharacter(playerId, characterId) {
-		var pData = playerData[playerId];
-		// if character is new, push to local and database character list for player
-		if (pData.characters.indexOf(characterId) < 0) {
-			pData.characters.push(characterId);
-			db.addCharacterToPlayer(playerId, characterId);
-		}
 	}
 
 	// since we can't tell from the online status which characters actually belong to which players, we must assume that characters can belong to multiple players
-	function addCharacterToPlayer(characterId, playerId) {
-		var cData = characterData[characterId];
+	function linkPlayerAndCharacter(pData, cData) {
 		// if player is new to set or character has no players set, push to local and db for character
-		if (cData.players.indexOf(playerId) < 0) {
-			cData.players.push(playerId);
-			db.addPlayerToCharacter(characterId, playerId);
+		if (pData.characters.indexOf(cData.id) < 0) {
+			pData.characters.push(cData.id);
+		}
+		if (cData.players.indexOf(pData.id) < 0) {
+			cData.players.push(pData.id);
 		}
 	}
 
