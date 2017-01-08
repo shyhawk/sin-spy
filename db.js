@@ -57,19 +57,19 @@ module.exports = function(dbString, logging, callback) {
 	            characters: [],
 	            logs: []
 	        };
-			return queueObject(colTypePlayer(), playerData);
+			queueObject(colTypePlayer(), playerData);
 		};
 
-		publicDb.queueCharacter = function(id, player, name, portrait) {
+		publicDb.queueCharacter = function(id, name, portrait) {
 			var characterData = {
 				_id: id,
 	            id: id,
-	            player: player,
 	            name: name,
 	            portrait: portrait,
+	            players: [],
 	            logs: []
 	        };
-			return queueObject(colTypeCharacter(), characterData);
+			queueObject(colTypeCharacter(), characterData);
 		};
 
 		function queueObject(type, data) {
@@ -77,9 +77,13 @@ module.exports = function(dbString, logging, callback) {
 			if (!queueSet) 
 				queueSet = documentQueueSet[type] = {};
 
-			queueSet[data.id] = data;
-			
-			return data;
+			var existing = queueSet[data.id];
+			if (!existing) {
+				queueSet[data.id] = data;
+				return data;
+			} else {
+				return existing;
+			}
 		}
 
 		publicDb.findOrAddQueued = function(colType, findCallback, addCallback, completeCallback) {
@@ -167,6 +171,14 @@ module.exports = function(dbString, logging, callback) {
 			var players = getCollection(colTypePlayer());
 			players.update({id: id}, {$addToSet: {characters: characterId}});
 		};
+
+		publicDb.addPlayerToCharacter = function(id, playerId) {
+			if (!id || !playerId)
+				return;
+
+			var characters = getCollection(colTypeCharacter());
+			characters.update({id: id}, {$addToSet: {players: playerId}, $unset: {player:1}}); // add to/create players set and delete player field, if present
+		}
 
 		publicDb.updatePlayerInfo = function(id, portrait) {
 			var players = getCollection(colTypePlayer());

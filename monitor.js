@@ -13,6 +13,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	//// Player Data Handling ////
 
+	var dataCleanupTimeouts = {};
 	publicMonitor.cleanup = function(playerData, characterData, callback) {
 		var playerIds = Object.keys(onlinePlayerDataProperty());
 		var characterIds = Object.keys(onlineCharacterDataProperty());
@@ -129,7 +130,7 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	            	};
 	            }
 
-	            var cData = getOrAddCharacter(characterData, pData, entry);
+	            var cData = getOrAddCharacter(characterData, entry);
 
 	            if (!onlinePlayerDataProperty()[playerEntry.id] && !joinedPlayerSet[playerEntry.id]) { // player just logged in
 	            	joinedPlayerSet[playerEntry.id] = playerEntry.id; // player has been processed as joined
@@ -141,6 +142,13 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	                if (!characterEntry) { // logged in without a character (webclient login)
 	                	dataUpdated();
 	                    logging.log("%s logged into %s", playerEntry.name, playerEntry.latestClient().name);
+	                } else if (cData) {
+				        // create or add to temporary set of players for this character
+				        if (!cData.tempPlayers) cData.tempPlayers = [];
+
+				        if (cData.tempPlayers.indexOf(entry.playerId) < 0) {
+				        	cData.tempPlayers.push(entry.playerId);
+				        }
 	                }
 	            }
 
@@ -150,9 +158,9 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	            		joinedCharacterSet[characterEntry.id] = characterEntry.id; // character has been processed as joined
 
 		            	if (!previousCharacterEntry) { // character just logged in
-			                characterJoined(cData);
+			                characterJoined(cData, pData.id);
 
-			                db.queueCharacter(cData.id, pData.id, cData.name, cData.portrait);
+			                db.queueCharacter(cData.id, cData.name, cData.portrait);
 
 			                dataUpdated();
 			                logging.log("%s logged into %s as %s", characterEntry.player.name, characterEntry.client.name, characterEntry.name);
@@ -270,14 +278,14 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	}
 
 	// initialize local data for characters
-	function getOrAddCharacter(characterData, pData, entry) {
+	function getOrAddCharacter(characterData, entry) {
 	    if (!entry.pcId) return null; // ignore for entries without character data
 
 	    var cData = characterData[entry.pcId];
 	    if (!cData) { // character has no record, so create one
 	        cData = characterData[entry.pcId] = {
 	            id: entry.pcId,
-	            player: entry.playerId,
+	            players: [],
 	            name: entry.pcName,
 	            portrait: entry.portrait,
 	            logs: []
@@ -355,36 +363,52 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 	}
 
 	function characterFound(dbData, cData) {
+		setCharacterData(dbData, cData);
+
+		logging.log("Retrieved character %s", dbData.name);
+	}
+
+	function characterAdded(dbData, cData) {
+		setCharacterData(dbData, cData);
+
+		logging.log("Added character %s", dbData.name);
+	}
+
+	function setCharacterData(dbData, cData) {
 		cData.description = dbData.description; // must manually set description
+		if (dbData.players) cData.players = dbData.players; // get from database, if exists
 
         // update character name, portrait, and description in case they have changed
         updateCharacterData(cData, dbData.name, dbData.portrait, true, function(cData) {
         	updateCharacterDb(cData);
         });
 
-		logging.log("Retrieved character %s", dbData.name);
+		// add character to player's character list both in db and locally, if it doesn't exist
+		if (cData.tempPlayers) {
+			cData.tempPlayers.forEach(function (playerId, index) {
+				addPlayerToCharacter(playerId, cData.id);
+				addCharacterToPlayer(cData.id, playerId);
+			});
+			delete cData.tempPlayers; // clean up after
+		}
 	}
 
-	function characterAdded(dbData, cData) {
-		cData.description = dbData.description; // must manually set description
-
-		// get character description
-		updateCharacterData(cData, dbData.name, dbData.portrait, true, function(cData) {
-        	updateCharacterDb(cData);
-        });
-
-		// add character to player's character list both in database and in local data
-		addPlayerCharacter(cData.player, cData.id);
-
-		logging.log("Added character %s", dbData.name);
-	}
-
-	function addPlayerCharacter(playerId, characterId) {
+	function addPlayerToCharacter(playerId, characterId) {
 		var pData = playerData[playerId];
 		// if character is new, push to local and database character list for player
 		if (pData.characters.indexOf(characterId) < 0) {
 			pData.characters.push(characterId);
 			db.addCharacterToPlayer(playerId, characterId);
+		}
+	}
+
+	// since we can't tell from the online status which characters actually belong to which players, we must assume that characters can belong to multiple players
+	function addCharacterToPlayer(characterId, playerId) {
+		var cData = characterData[characterId];
+		// if player is new to set or character has no players set, push to local and db for character
+		if (cData.players.indexOf(playerId) < 0) {
+			cData.players.push(playerId);
+			db.addPlayerToCharacter(characterId, playerId);
 		}
 	}
 
@@ -458,20 +482,29 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	function playerJoined(pData) {
 		joined(pData.logs);
+		haltCleanData(pData); // prevent local player data from being wiped
 	}
 
-	function characterJoined(cData) {
+	function characterJoined(cData, playerId) {
 	    joined(cData.logs);
 	}
 
 	function characterLeft(cData, callback) {
-	    left(cData.logs);
-	    pushLogs(db.colTypeCharacter(), cData, callback);
+		try {
+		    left(cData.logs);
+		    pushLogs(db.colTypeCharacter(), cData, callback);
+		} catch (e) { // trying to get info
+			console.dir(cData);
+			throw e;
+		}
 	}
 
 	function playerLeft(pData, callback) {
 	    left(pData.logs);
-	    pushLogs(db.colTypePlayer(), pData, callback);
+	    pushLogs(db.colTypePlayer(), pData, function() {
+	    	if (callback) callback();
+	    	cleanData(pData); // wipe local player data after delay
+	    });
 	}
 
 	function joined(logs) {
@@ -536,6 +569,30 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 			}
 		}
 		if (callback) callback();
+	}
+
+	function cleanData(pData) { // when time is up, clear player's and player's characters' data from memory
+			var timeout = setTimeout(function() {
+				logging.log("Cleaning data for player %s and player's offline characters", pData.name);
+				pData.characters.forEach(function (characterId, index) {
+					var cData = characterData[characterId];
+					// only remove offline characters, otherwise error could occur when trying to log off a removed character
+					if (cData && cData.logs[cData.logs.length - 1].quit) {
+						delete characterData[characterId];
+					}
+				});
+				delete playerData[pData.id];
+			}, 3600000); // after an hour
+			haltCleanData(pData); // stop any existing timeout for the player
+			dataCleanupTimeouts[pData.id] = timeout;
+	}
+
+	function haltCleanData(pData) {
+		var timeout = dataCleanupTimeouts[pData.id];
+		if (timeout) {
+			clearTimeout(timeout);
+			delete dataCleanupTimeouts[pData.id];
+		}
 	}
 
 	function getLogGap() { // allow longer gap on initial start-up in case app was shut down suddenly
