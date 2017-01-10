@@ -256,6 +256,8 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 		console.log("All active log backup requests made...");
 	};
 
+	//// Local Data Set-Up ////
+
 	// initialize local data for players
 	function getOrAddPlayer(playerData, entry) {
 	    var pData = playerData[entry.playerId];
@@ -289,8 +291,6 @@ module.exports = function(db, playerData, characterData, onlinePlayerDataPropert
 
 	    return cData;
 	}
-
-	//// Local Data Set-Up ////
 
 	// generically get data and merge/push logs where necessary
 	function retrievedData(localData, callback, type) {
