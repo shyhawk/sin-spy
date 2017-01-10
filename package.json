@@ -1,6 +1,6 @@
 {
   "name": "SinSpy",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A web application for monitoring player traffic on Sinfar.",
   "main": "app.js",
   "license": "MIT",
